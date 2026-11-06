@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+*.egg-info/
+.ruff_cache/
+# downloaded data and run outputs
+data/
+_data/
+*.parquet
+runs/
