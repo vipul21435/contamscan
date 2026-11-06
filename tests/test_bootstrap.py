@@ -36,3 +36,38 @@ def test_interval_width_matches_normal_theory():
     c = compare(a, b, n_boot=4000)
     se = np.sqrt(a.var(ddof=1) / a.size + b.var(ddof=1) / b.size)
     assert abs((c.high - c.low) - 2 * 1.96 * se) < 0.25 * 2 * 1.96 * se
+
+
+def test_subset_z_matches_simulated_sampling_distribution():
+    """sigma_n is the spread of means of random n-subsets of the set, and the Z of random
+    subsets is close to standard normal (about 5 % beyond |Z| > 2)."""
+    from contamscan.bootstrap import subset_z
+
+    rng = np.random.default_rng(5)
+    scores = (rng.random(400) < 0.6).astype(float)
+    n = 60
+    means, zs = [], []
+    for _ in range(4000):
+        mask = np.zeros(scores.size, dtype=bool)
+        mask[rng.choice(scores.size, n, replace=False)] = True
+        s = subset_z(scores, mask)
+        means.append(s.mean)
+        zs.append(s.z)
+    s = subset_z(scores, mask)
+    assert s.n == n and s.mu == scores.mean()
+    assert abs(np.std(means) - s.sigma) < 0.05 * s.sigma
+    beyond = np.mean(np.abs(zs) > 2)
+    assert 0.03 <= beyond <= 0.07
+
+
+def test_subset_z_edge_cases_and_relative_change():
+    from contamscan.bootstrap import relative_change, subset_z
+
+    assert subset_z([1.0, 0.0], [False, False]) is None
+    whole = subset_z([1.0, 0.0, 1.0], [True, True, True])
+    assert whole.sigma == 0.0 and whole.z is None
+    high = subset_z([1, 1, 0, 0], [True, True, False, False], "dirty")
+    assert high.subset == "dirty" and high.z > 0
+    assert relative_change([0.5], [0.5, 0.7]) == (0.5 - 0.6) / 0.6
+    assert relative_change([], [1.0]) is None
+    assert relative_change([1.0], [0.0]) is None

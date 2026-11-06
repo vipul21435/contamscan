@@ -5,6 +5,11 @@ its score on the full set; Llama 2 (Touvron et al. 2023, Appendix A.6) compares 
 and dirty subsets with their complements. This module reports the difference of means
 ``mean(contaminated) - mean(clean)`` with a percentile bootstrap interval that resamples
 each group independently (the groups are disjoint sets of items).
+
+It also gives the Llama 2 subset statistic ``Z_n = (mean(subset) - mu_n) / sigma_n``, where
+``mu_n`` and ``sigma_n**2`` are the mean and variance of the mean of ``n`` items drawn from
+the whole evaluation set, and the GPT-3 relative change of the clean-only score against the
+score on the whole set.
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-__all__ = ["Comparison", "compare"]
+__all__ = ["Comparison", "compare", "SubsetZ", "subset_z", "relative_change"]
 
 
 @dataclass(frozen=True)
@@ -63,3 +68,49 @@ def compare(
         confidence=confidence,
         n_boot=n_boot,
     )
+
+
+@dataclass(frozen=True)
+class SubsetZ:
+    subset: str
+    n: int
+    mean: float
+    mu: float
+    sigma: float
+    z: float | None
+
+
+def subset_z(scores: Sequence[float], mask: Sequence[bool], subset: str = "") -> SubsetZ | None:
+    """Llama 2 statistic for one subset of the evaluation set.
+
+    ``mu_n`` is the mean over all ``N`` items and ``sigma_n**2`` the variance of the mean of
+    ``n`` items drawn without replacement from them:
+    ``sigma_n**2 = s**2 / n * (N - n) / (N - 1)`` with ``s**2`` the population variance.
+    The paper does not say whether its sampling is with or without replacement; drawing
+    without replacement matches choosing a subset of a fixed set. ``z`` is ``None`` when
+    ``sigma_n`` is zero (the subset is the whole set, or every score is equal). Returns
+    ``None`` for an empty subset.
+    """
+    x = np.asarray(scores, dtype=float)
+    m = np.asarray(mask, dtype=bool)
+    n, big_n = int(m.sum()), int(x.size)
+    if n == 0:
+        return None
+    mu = float(x.mean())
+    var = float(x.var()) / n * (big_n - n) / (big_n - 1) if big_n > 1 else 0.0
+    sigma = float(np.sqrt(var))
+    mean = float(x[m].mean())
+    z = (mean - mu) / sigma if sigma > 0 else None
+    return SubsetZ(subset, n, mean, mu, sigma, z)
+
+
+def relative_change(clean: Sequence[float], full: Sequence[float]) -> float | None:
+    """GPT-3 relative change ``(mean(clean) - mean(full)) / mean(full)``.
+
+    ``None`` when the clean subset is empty or the full-set mean is zero.
+    """
+    a = np.asarray(clean, dtype=float)
+    b = np.asarray(full, dtype=float)
+    if a.size == 0 or b.size == 0 or b.mean() == 0:
+        return None
+    return float((a.mean() - b.mean()) / b.mean())
