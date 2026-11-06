@@ -28,12 +28,25 @@ Python 3.10 or newer. The only required dependency is numpy.
 
 The evaluation set is JSONL (or Parquet) with an id, the text fields to check and
 optionally a per-item score; the corpus is any mix of JSONL, Parquet and plain-text files
-or directories, read one record at a time.
+or directories, read one record at a time. The synthetic example below writes a small
+evaluation set and corpus that the command can be tried on:
 
-```bash
-contamscan scan eval.jsonl corpus/ --fields question,answer --score-field pass \
-    --json report.json --markdown report.md --fail-above 0.05
+```text
+$ python examples/synthetic_comparison.py runs/synthetic   # writes eval.jsonl, corpus.jsonl
+$ contamscan scan runs/synthetic/eval.jsonl runs/synthetic/corpus.jsonl --fields question \
+    --score-field pass --json report.json --markdown report.md --fail-above 0.05
+FAIL: palm fraction 0.200 > 0.05
+200 items, 2060 documents, 1.1 s
+  gpt3           55 contaminated (27.5%)
+  palm           40 contaminated (20.0%)
+  llama2         40 contaminated (20.0%)
+  substring      40 contaminated (20.0%)
+$ echo $?
+1
 ```
+
+For your own data, replace the two paths and `--fields` (and `--corpus-fields` for the
+corpus, default `text`).
 
 A real run, HumanEval against the 50,661 records of a public code SFT set (see
 [Results](#results-on-public-code-data) for the data and its licence):
@@ -57,13 +70,13 @@ field missing from only some records, a `--corpus-fields` name found in no recor
 documents with empty text are reported as warnings on stderr.
 
 The score comparison needs per-item scores. A seeded synthetic run shows it
-(`python examples/synthetic_comparison.py runs/synthetic`, 0.7 s wall time): 200 items of
+(`python examples/synthetic_comparison.py runs/synthetic`, 0.8 s wall time): 200 items of
 random words, 60 of them planted whole or in part in 2,060 random documents, simulated
 pass rates 0.45 for unplanted and 0.75 for fully planted items. **These scores are
 simulated, not model output.**
 
 ```text
-200 items, 2060 documents, 0.5 s
+200 items, 2060 documents, 0.6 s
   gpt3           55 contaminated (27.5%)
   palm           40 contaminated (20.0%)
   llama2         40 contaminated (20.0%)
@@ -113,7 +126,8 @@ n-gram hashes are looked up and the hit positions are accumulated per item. Memo
 with the evaluation set, not the corpus. With 64-bit hashes the chance of a false match
 between two given n-grams is about 2^-64. Property tests check the index, the
 document-frequency filter and the skipgram budget against direct scans of random text
-drawn from small vocabularies.
+drawn from small vocabularies, and whole-item containment against a direct substring
+check. Test coverage is 99 % of statements (`uv run pytest --cov=contamscan`, 65 tests).
 
 **Methods.** For an item with k tokens and g_n = k - n + 1 n-grams:
 
@@ -238,9 +252,16 @@ size used with some document, or contained whole in one):
 | mbpp_test | self_oss_instruct_50k | code | paper | 13 | 100 (20.0 %) | 0 | 0 | 96 (19.2 %) | 0 | 330 | 12.3 | 12.6 |
 | mbpp_test | self_oss_instruct_50k | code | skip4 | 13 | 105 (21.0 %) | 0 | 0 | 110 (22.0 %) | 0 | 330 | 18.0 | 18.2 |
 
-`--workers` on the HumanEval against self-oss-instruct scan with the code tokenizer, in a
-separate, quieter run: 19.8 s with 1 process, 6.7 s with 4, 6.2 s with 8 (scan time as
-printed by the tool).
+`--workers` on the HumanEval against self-oss-instruct scan with the code tokenizer, scan
+time as printed by the tool, on the same 8-core laptop with a load average between 5 and
+12 from other jobs, so the times depend on the machine and its load: 26.4 s with 1
+process, 13.7 s with 4, 12.6 s with 8. The command, run from the data directory with
+W = 1, 4 and 8:
+
+```bash
+contamscan scan jsonl/humaneval.jsonl raw/self_oss_instruct_50k.parquet \
+    --fields prompt,solution --corpus-fields instruction,response --tokenizer code --workers W
+```
 
 ![Share of items at or above each Llama 2 token-coverage level](docs/coverage-code.png)
 
@@ -262,10 +283,13 @@ Examples (item, document id in the corpus, character offsets in that document):
   Roman-numeral symbol list, document `252334`) and `HumanEval/96` (a trial-division prime
   loop, document `158426`). These are the four `long-match` items; each is a shared
   table or idiom, not a copied problem, and each item's token coverage stays below 47 %.
-- `HumanEval/55` against self-oss-instruct, document `79440` characters 144-237: the
+- `HumanEval/55` against self-oss-instruct (word tokenizer, `paper` flags), document
+  `79440` characters 144-237: the
   recursive Fibonacci body `if n == 0: return 0 if n == 1: return 1 return fib(n - 1) +
   fib(n - 2)`. With `--palm-per-field` the solution field is 100 % matched and the item is
-  flagged; joined with the prompt it is at 35.7 %.
+  flagged; joined with the prompt it is at 35.7 %. With the code tokenizer the longest match
+  is characters 905-1007 of the same document and the solution field reaches only 56.5 %,
+  so the item is not flagged.
 - `mbpp/226` against CodeAlpaca-20k, `alpaca-439` characters 0-94: the problem statement
   "Write a python function to remove the characters which have odd index values of a given
   string".
