@@ -27,3 +27,7 @@
 - Fix: a `--fields` name missing from every evaluation record, or a corpus with no text in
   any document, now stops with exit status 2 instead of reporting 0 % and passing
   `--fail-above`; partly missing fields and empty documents give warnings.
+- Fix: out-of-range flag values (n of 0, thresholds outside [0, 1], `--llama-clean` above
+  `--llama-dirty`, `--workers 0`, negative `--max-matches`) and missing input paths are
+  usage errors (exit status 2) instead of tracebacks or silent acceptance; a partial
+  `--score-field` prints how many items lack a score.

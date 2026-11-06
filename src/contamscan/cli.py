@@ -33,6 +33,34 @@ def _n_or_auto(s: str) -> int | str:
     return n
 
 
+def _int_at_least(low: int):
+    def parse(s: str) -> int:
+        try:
+            n = int(s)
+        except ValueError as e:
+            raise argparse.ArgumentTypeError(f"expected an integer, got {s!r}") from e
+        if n < low:
+            raise argparse.ArgumentTypeError(f"must be at least {low}, got {n}")
+        return n
+
+    parse.__name__ = "integer"
+    return parse
+
+
+_positive = _int_at_least(1)
+_non_negative = _int_at_least(0)
+
+
+def _fraction(s: str) -> float:
+    try:
+        x = float(s)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"expected a number, got {s!r}") from e
+    if not 0.0 <= x <= 1.0:
+        raise argparse.ArgumentTypeError(f"must be between 0 and 1, got {x}")
+    return x
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="contamscan", description=__doc__)
     p.add_argument("--version", action="version", version=f"contamscan {__version__}")
@@ -55,18 +83,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=13,
         help="GPT-3 N (default 13); 'auto' = 5th-percentile item length clamped to [8, 13]",
     )
-    g.add_argument("--palm-n", type=int, default=8, help="PaLM n (default 8)")
-    g.add_argument("--palm-threshold", type=float, default=0.70, help="PaLM (default 0.70)")
-    g.add_argument("--llama-n", type=int, default=11, help="Llama 2: n-grams longer than 10")
-    g.add_argument("--llama-clean", type=float, default=0.20)
-    g.add_argument("--llama-dirty", type=float, default=0.80)
+    g.add_argument("--palm-n", type=_positive, default=8, help="PaLM n (default 8)")
+    g.add_argument("--palm-threshold", type=_fraction, default=0.70, help="PaLM (default 0.70)")
+    g.add_argument("--llama-n", type=_positive, default=11, help="Llama 2: n-grams longer than 10")
+    g.add_argument("--llama-clean", type=_fraction, default=0.20)
+    g.add_argument("--llama-dirty", type=_fraction, default=0.80)
     g.add_argument(
         "--llama-skip-budget",
-        type=int,
+        type=_non_negative,
         default=0,
         help="mismatched positions allowed inside a Llama 2 span (0 = exact; the paper used 4)",
     )
-    g.add_argument("--substring-min-tokens", type=int, default=50)
+    g.add_argument("--substring-min-tokens", type=_positive, default=50)
     g.add_argument(
         "--palm-per-field",
         action="store_true",
@@ -74,21 +102,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     g.add_argument(
         "--max-doc-freq",
-        type=int,
+        type=_positive,
         default=None,
         help="ignore item n-grams found in more than this many documents (off; GPT-3 used 10)",
     )
     g = s.add_argument_group("output")
-    g.add_argument("--max-matches", type=int, default=5, help="matches kept per item")
-    g.add_argument("--workers", type=int, default=1, help="processes for the corpus scan")
+    g.add_argument("--max-matches", type=_positive, default=5, help="matches kept per item")
+    g.add_argument("--workers", type=_positive, default=1, help="processes for the corpus scan")
     g.add_argument("--json", type=Path, default=None, help="write the JSON report here")
     g.add_argument("--markdown", type=Path, default=None, help="write the Markdown report here")
-    g.add_argument("--examples", type=int, default=10, help="items shown in Markdown")
-    g.add_argument("--n-boot", type=int, default=10_000)
+    g.add_argument("--examples", type=_non_negative, default=10, help="items shown in Markdown")
+    g.add_argument("--n-boot", type=_positive, default=10_000)
     g.add_argument("--seed", type=int, default=0)
     g.add_argument(
         "--fail-above",
-        type=float,
+        type=_fraction,
         default=None,
         help="exit 1 if the contaminated fraction under --fail-method exceeds this",
     )
@@ -112,6 +140,11 @@ def _warn(msg: str) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.llama_clean > args.llama_dirty:
+        parser.error("--llama-clean must not be above --llama-dirty")
+    for path in (args.eval, *args.corpus):
+        if not path.exists():
+            parser.error(f"no such file or directory: {path}")
     missing: Counter[str] = Counter()
     try:
         items = load_eval(args.eval, args.fields, args.id_field, args.score_field, missing)
@@ -120,6 +153,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     for f in args.fields:
         if missing[f]:
             _warn(f"eval field {f!r} is missing from {missing[f]} of {len(items)} records")
+    if args.score_field:
+        unscored = sum(it.score is None for it in items)
+        if unscored:
+            _warn(
+                f"{unscored} of {len(items)} items have no {args.score_field!r}; "
+                "the score comparison needs a score for every item and is skipped"
+            )
     gpt3_n = args.gpt3_n
     if gpt3_n == "auto":
         gpt3_n = gpt3_auto_n([len(tokenize(it.text, args.tokenizer)) for it in items])

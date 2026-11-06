@@ -165,3 +165,43 @@ def test_some_empty_corpus_documents_warn(tmp_path, capsys):
     corpus.write_text(corpus.read_text() + "\n" + json.dumps({"id": "d2", "text": "  "}))
     assert main(["scan", str(ev), str(corpus), "--fields", "prompt"]) == 0
     assert "1 of 3 corpus documents have no text" in capsys.readouterr().err
+
+
+def test_bad_arguments_and_paths_are_usage_errors(tmp_path, capsys):
+    import pytest
+
+    ev, corpus = make(tmp_path, scores=False)
+    base = ["scan", str(ev), str(corpus), "--fields", "prompt"]
+    bad = [
+        ["--palm-n", "0"],
+        ["--palm-threshold", "7"],
+        ["--llama-clean", "0.9"],  # above the default dirty threshold 0.80
+        ["--workers", "0"],
+        ["--max-matches", "-1"],
+        ["--llama-skip-budget", "x"],
+        ["--fail-above", "nan?"],
+    ]
+    for extra in bad:
+        with pytest.raises(SystemExit) as e:
+            main(base + extra)
+        assert e.value.code == 2, extra
+    for args in (
+        ["scan", str(tmp_path / "nope.jsonl"), str(corpus)],
+        ["scan", str(ev), str(tmp_path / "nope")],
+    ):
+        with pytest.raises(SystemExit) as e:
+            main(args)
+        assert e.value.code == 2
+        assert "no such file or directory" in capsys.readouterr().err
+
+
+def test_partial_scores_are_reported(tmp_path, capsys):
+    ev, corpus = make(tmp_path)
+    rows = [json.loads(x) for x in ev.read_text().splitlines()]
+    del rows[1]["pass"]
+    ev.write_text("\n".join(json.dumps(r) for r in rows))
+    out = tmp_path / "r.json"
+    args = ["scan", str(ev), str(corpus), "--fields", "prompt", "--score-field", "pass"]
+    assert main(args + ["--json", str(out)]) == 0
+    assert "1 of 6 items have no 'pass'" in capsys.readouterr().err
+    assert json.loads(out.read_text())["comparison"] == {}
