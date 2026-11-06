@@ -217,3 +217,33 @@ def test_max_doc_freq_also_filters_skipgram_spans():
     assert run(item, docs, max_doc_freq=1, llama_skip_budget=4).llama2_coverage == 0.0
     assert run(item, docs, max_doc_freq=3, llama_skip_budget=4).llama2_coverage == 1.0
     assert run(item, docs, llama_skip_budget=4).llama2_coverage == 1.0
+
+
+def test_long_match_starts_at_exactly_substring_min_tokens():
+    item = text(0, 100)
+    assert run(item, [text(0, 50)]).substring_label == "long-match"
+    assert run(item, [text(0, 49)]).substring_label == "clean"
+    assert run(item, [text(0, 30)], substring_min_tokens=30).substring_label == "long-match"
+
+
+def test_per_field_palm_on_a_field_of_exactly_palm_n_tokens():
+    question, target = text(0, 8), text(100, 140)
+    it = EvalItem(
+        "q",
+        question + "\n" + target,
+        field_spans=(("q", 0, len(question)), ("t", len(question) + 1, 10**6)),
+    )
+    r = scan([it], [("d", "zz " + question + " zz")], Params(palm_per_field=True))[0]
+    assert r.palm_fields == {"q": 1.0, "t": 0.0} and r.palm_label == "contaminated"
+
+
+def test_containment_when_the_document_glues_text_to_the_first_and_last_word():
+    item = "Hello, World! This is a test"
+    r = run(item, ["intro xHELLO WORLD this is a TESTy outro"])
+    assert r.substring_label == "exact" and r.matches[0].exact_normalised
+
+
+def test_a_raw_hit_is_also_a_normalised_hit():
+    doc = "pre " + text(0, 5) + " post"
+    m = run(text(0, 5), [doc]).matches[0]
+    assert m.exact and m.exact_normalised

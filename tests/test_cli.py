@@ -75,6 +75,8 @@ def test_fail_above_sets_exit_code(tmp_path):
     base = ["scan", str(ev), str(corpus), "--fields", "prompt"]
     assert main(base + ["--fail-above", "0.5", "--fail-method", "gpt3"]) == 0
     assert main(base + ["--fail-above", "0.2", "--fail-method", "gpt3"]) == 1
+    # the gate fails only above the threshold: a fraction equal to it passes
+    assert main(base + ["--fail-above", repr(2 / 6), "--fail-method", "gpt3"]) == 0
 
 
 def test_gpt3_auto_n_and_bad_n(tmp_path):
