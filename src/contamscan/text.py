@@ -27,16 +27,19 @@ __all__ = ["Token", "normalise", "tokenize", "TOKENIZERS"]
 
 
 def _mark_class() -> str:
-    """Regex class body for every combining mark (Unicode category M)."""
+    """Regex class body for the combining marks (Unicode category M) of the BMP.
+
+    Marks outside the BMP (some historic scripts, variation selectors supplement) are left
+    out: with them ``re`` cannot use a bitmap for the class and matching gets much slower.
+    """
     ranges: list[list[int]] = []
-    for c in range(0x20000):
+    for c in range(0x10000):
         if unicodedata.category(chr(c)).startswith("M"):
             if ranges and ranges[-1][1] == c - 1:
                 ranges[-1][1] = c
             else:
                 ranges.append([c, c])
-    ranges.append([0xE0100, 0xE01EF])  # variation selectors supplement
-    return "".join(f"\\U{a:08x}-\\U{b:08x}" for a, b in ranges)
+    return "".join(f"\\u{a:04x}-\\u{b:04x}" for a, b in ranges)
 
 
 _MARK = _mark_class()
@@ -51,6 +54,10 @@ _WORD_RE = re.compile(rf"[{_CJK}]|(?:[^\W_{_CJK}]|[{_MARK}])+")
 _CODE_RE = re.compile(
     rf"[{_CJK}]|(?:[^\W\d{_CJK}]|[{_MARK}])(?:[^\W{_CJK}]|[{_MARK}])*|\d+(?:\.\d+)?|\S"
 )
+# The same rules for pure-ASCII text (no marks, no CJK, NFKC is the identity), which is
+# most of a code corpus and is matched several times faster.
+_ASCII_WORD_RE = re.compile(r"[A-Za-z0-9]+")
+_ASCII_CODE_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|\S")
 _PUNCT_RE = re.compile(r"[^\w\s]|_", re.UNICODE)
 _WS_RE = re.compile(r"\s+")
 
@@ -94,10 +101,14 @@ def tokenize(text: str, mode: str = "word") -> list[Token]:
     Token texts are NFKC-normalised; ``word`` tokens are also case-folded, ``code`` tokens
     keep case. Offsets are those of the raw match.
     """
+    if mode not in TOKENIZERS:
+        raise ValueError(f"unknown tokenizer {mode!r}; choose one of {TOKENIZERS}")
+    if text.isascii():
+        if mode == "word":
+            found = _ASCII_WORD_RE.finditer(text)
+            return [Token(m.group().lower(), m.start(), m.end()) for m in found]
+        return [Token(m.group(), m.start(), m.end()) for m in _ASCII_CODE_RE.finditer(text)]
     if mode == "word":
-        return [
-            Token(_nfkc(m.group()).casefold(), m.start(), m.end()) for m in _WORD_RE.finditer(text)
-        ]
-    if mode == "code":
-        return [Token(_nfkc(m.group()), m.start(), m.end()) for m in _CODE_RE.finditer(text)]
-    raise ValueError(f"unknown tokenizer {mode!r}; choose one of {TOKENIZERS}")
+        found = _WORD_RE.finditer(text)
+        return [Token(_nfkc(m.group()).casefold(), m.start(), m.end()) for m in found]
+    return [Token(_nfkc(m.group()), m.start(), m.end()) for m in _CODE_RE.finditer(text)]

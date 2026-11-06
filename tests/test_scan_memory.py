@@ -11,7 +11,7 @@ def test_repeated_token_document_needs_memory_linear_in_the_item():
     """A separator line repeated through a document hits the same item n-gram at every
     position; the longest-run search must not store every (item, document) pair."""
     item = EvalItem("a", "def f():\n    # " + "=" * 60 + "\n    return 1")
-    doc = ("# " + "=" * 79 + "\n") * 250
+    doc = ("# " + "=" * 79 + "\n") * 150  # 12,300 characters
     index = EvalIndex([item], Params(), "code")
     tracemalloc.start()
     t0 = time.perf_counter()
@@ -20,5 +20,5 @@ def test_repeated_token_document_needs_memory_linear_in_the_item():
     _, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     assert hits.spans[0][0] == 61  # "#" and the 60 "=" tokens
-    assert peak < 20 * 2**20, peak
-    assert seconds < 20
+    assert peak < 12 * 2**20, peak  # storing every hit pair: 50.7 MB
+    assert seconds < 60

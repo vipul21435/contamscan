@@ -62,3 +62,16 @@ def test_cjk_text_is_split_per_character():
     assert r.palm_label == "contaminated"
     # Hiragana and katakana too; Latin words stay whole next to them
     assert [t.text for t in tokenize("テスト test です")] == ["テ", "ス", "ト", "test", "で", "す"]
+
+
+@pytest.mark.parametrize("mode", ["word", "code"])
+def test_ascii_fast_path_matches_the_general_tokenizer(mode):
+    """Pure-ASCII text takes a faster regex; appending one non-ASCII character sends the
+    same text through the general one, which must give the same tokens before it."""
+    rng = random.Random(3)
+    alphabet = "abcXYZ_019 .,:;()[]{}+-*/=<>!\t\n'\""
+    for _ in range(500):
+        text = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 60)))
+        fast = tokenize(text, mode)
+        general = tokenize(text + " é", mode)
+        assert fast == general[:-1]
