@@ -26,11 +26,9 @@ def lcs_len(a: list[str], b: list[str]) -> int:
     return best
 
 
-@pytest.mark.parametrize("seed", range(6))
-@pytest.mark.parametrize("workers", [1, 2])
+# six seeds in one process, two through a worker pool (pool start-up is the slow part)
+@pytest.mark.parametrize(("seed", "workers"), [(s, 1) for s in range(6)] + [(0, 2), (1, 2)])
 def test_index_matches_brute_force(seed, workers):
-    if workers == 2 and seed > 1:
-        pytest.skip("pool start-up cost; two seeds are enough")
     rng = random.Random(seed)
     vocab = [f"t{i}" for i in range(6)]  # tiny vocabulary: many chance matches
     items = []
