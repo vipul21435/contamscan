@@ -88,3 +88,43 @@ def test_gpt3_auto_n_and_bad_n(tmp_path):
     for bad in ("x", "0"):
         with pytest.raises(SystemExit):
             main(args + ["--gpt3-n", bad])
+
+
+def test_paper_flags_and_empty_groups(tmp_path):
+    ev = tmp_path / "eval.jsonl"
+    rows = [{"id": f"q{k}", "prompt": seg(20 * k, 20 * k + 15), "pass": k % 2} for k in range(4)]
+    ev.write_text("\n".join(json.dumps(r) for r in rows))
+    corpus = tmp_path / "corpus.jsonl"
+    corpus.write_text(json.dumps({"id": "d0", "text": "unrelated words only"}))
+    out_json, out_md = tmp_path / "r.json", tmp_path / "r.md"
+    rc = main(
+        [
+            "scan",
+            str(ev),
+            str(corpus),
+            "--fields",
+            "prompt",
+            "--score-field",
+            "pass",
+            "--palm-per-field",
+            "--max-doc-freq",
+            "10",
+            "--llama-skip-budget",
+            "4",
+            "--json",
+            str(out_json),
+            "--markdown",
+            str(out_md),
+            "--n-boot",
+            "100",
+        ]
+    )
+    assert rc == 0
+    rep = json.loads(out_json.read_text())
+    assert rep["params"]["palm_per_field"] and rep["params"]["llama_skip_budget"] == 4
+    assert rep["items"][0]["palm_fields"] == {"prompt": 0.0}
+    assert rep["comparison"]["differences"]["gpt3"] is None  # nothing contaminated
+    dirty = [z for z in rep["comparison"]["llama2_subsets"] if z["subset"] == "dirty"][0]
+    assert dirty["n"] == 0
+    md = out_md.read_text()
+    assert "one group empty" in md and "| dirty | 0 |" in md
