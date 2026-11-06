@@ -18,8 +18,8 @@ def test_load_eval_joins_fields_and_scores(tmp_path):
 
 def test_duplicate_ids_and_bad_json(tmp_path):
     p = tmp_path / "e.jsonl"
-    write_jsonl(p, [{"id": "a"}, {"id": "a"}])
-    with pytest.raises(ValueError, match="duplicate"):
+    write_jsonl(p, [{"id": "a", "q": "x"}, {"id": "a", "q": "y"}])
+    with pytest.raises(ValueError, match="duplicate item id 'a' in "):
         load_eval(p, ["q"])
     p.write_text("{not json\n")
     with pytest.raises(ValueError, match="not valid JSON"):
