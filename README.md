@@ -59,20 +59,24 @@ item's overlap under each method, its label and the matched documents with offse
 
 ## How it works
 
-**Tokens.** `--tokenizer word` (default) case-folds, drops punctuation and splits on
-whitespace, which follows the GPT-3 rule of comparing words "ignoring all punctuation,
-whitespace, and casing". `--tokenizer code` keeps case and emits identifiers, numbers and
-each operator character as tokens, because `Foo`/`foo` differ in code and punctuation
-carries structure. In both, combining marks stay in their word, each token's text is
-NFKC-normalised (an NFD or fullwidth copy gives the same tokens as the original), and each
-Han, hiragana and katakana character is a token of its own, since Chinese and Japanese put
-no spaces between words; character n-grams are the usual unit for such text. Every token
-keeps its character span in the raw text. The text of an item is its
+**Tokens.** `--tokenizer word` (default) case-folds and splits at punctuation and
+whitespace, in the spirit of the GPT-3 rule of comparing words "ignoring all punctuation,
+whitespace, and casing". It differs from the GPT-3 filter's gram, "a lowercase, whitespace
+delimited word with no punctuation", which keeps `don't` as one word `dont`: here `don't`
+gives the two tokens `don`, `t` and `e.g.` gives `e`, `g`, so an item and a copy without
+the apostrophes (`dont`) differ in those tokens. `--tokenizer code` keeps case and emits
+identifiers, numbers and each operator character as tokens, because `Foo`/`foo` differ in
+code and punctuation carries structure. In both, combining marks stay in their word, each
+token's text is NFKC-normalised (an NFD or fullwidth copy gives the same tokens as the
+original), and each Han, hiragana and katakana character is a token of its own, since
+Chinese and Japanese put no spaces between words; character n-grams are the usual unit for
+such text. Every token keeps its character span in the raw text. The text of an item is its
 `--fields` joined by newlines, and a corpus document's text is its `--corpus-fields` joined
 the same way. A field that holds a list or an object (a chat `messages` list, answer
 choices) is replaced by its string values, one per line, so a turn copied verbatim is
-matched as text rather than as JSON with escapes and quotes. Exact containment is checked on the raw text and on a
-normalised form (NFKC, case-folded, punctuation removed, whitespace collapsed).
+matched as text rather than as JSON with escapes and quotes. Exact containment is checked
+on the raw text and on a normalised form (NFKC, case-folded, punctuation removed,
+whitespace collapsed).
 
 **Index.** Each token is hashed with BLAKE2b to 64 bits; an n-gram hash is the polynomial
 `sum(t_i * B^(n-1-i)) mod 2^64`, updated in O(1) per position. For each n used by a method
@@ -113,8 +117,10 @@ Flags and where their defaults come from:
   field and flags the item when any field reaches the threshold.
 - `--llama-n 11 --llama-clean 0.20 --llama-dirty 0.80`: Llama 2 counts a token as
   contaminated if it lies in a shared n-gram "longer than 10 tokens"; clean is below 20 %,
-  dirty is at or above 80 %. The paper repeats the analysis with minimum match lengths
-  10 to 50; pass a larger `--llama-n` to do the same.
+  dirty is at or above 80 %. The same appendix also speaks of "10(+)-skipgrams" and
+  repeats the analysis with minimum match length L in {10, 20, 30, 40, 50}, which reads as
+  at least 10 tokens; the default follows "longer than 10", `--llama-n 10` gives the other
+  reading, and a larger `--llama-n` repeats the analysis at a longer L.
 - `--llama-skip-budget 0`: the paper lets matched spans "differ in at most four positions"
   (no mismatches in the first 10 tokens, none trailing). With a budget B > 0, exact runs on
   the same alignment between item and document are joined while the tokens between them
@@ -141,8 +147,9 @@ and last word, which a document may cut mid-word); each document's normalised wo
 looked up in it and only the items found there are compared in full, raw and normalised.
 
 A document is reported for an item when it shares a run of at least the smallest n (8 by
-default) or contains the whole item; other documents, even ones sharing shorter runs, are
-not listed. For each item the report keeps the `--max-matches` documents, containment first
+default), contains the whole item, or, for an item shorter than the GPT-3 n, contains the
+item's whole token sequence; other documents, even ones sharing shorter runs, are not
+listed. For each item the report keeps the `--max-matches` documents, containment first
 and then the longest spans, with character offsets in both the item and the document. A
 containment match counts all the item's tokens as shared and covers the whole item; for a
 normalised-only hit, the document offsets run from the start of the first to the end of

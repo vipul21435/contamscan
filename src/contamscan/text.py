@@ -2,8 +2,10 @@
 
 Two tokenisers are provided:
 
-* ``word``: lower-cases, drops punctuation and splits on whitespace, following the
+* ``word``: lower-cases and splits at punctuation and whitespace, in the spirit of the
   GPT-3 overlap rule of comparing words "ignoring all punctuation, whitespace, and casing".
+  GPT-3 instead removes punctuation inside a whitespace-delimited word, so ``don't`` is
+  ``dont`` there and the two tokens ``don``, ``t`` here.
 * ``code``: keeps identifiers, numbers and operator characters as separate tokens and
   keeps case, because in code ``Foo`` and ``foo`` are different names and punctuation
   such as ``(`` or ``:`` carries structure.
