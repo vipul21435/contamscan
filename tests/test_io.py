@@ -72,3 +72,12 @@ def test_field_presence_counts(tmp_path):
     seen: Counter = Counter()
     assert len(list(iter_corpus([p], ["s", "t"], field_counts=seen))) == 2
     assert seen == Counter({"": 2, "s": 1})
+
+
+def test_utf8_bom_on_the_first_line_is_ignored(tmp_path):
+    p = tmp_path / "e.jsonl"
+    p.write_bytes(b"\xef\xbb\xbf" + b'{"id": "a", "q": "x"}\n{"id": "b", "q": "y"}\n')
+    assert [(i.id, i.text) for i in load_eval(p, ["q"])] == [("a", "x"), ("b", "y")]
+    p.write_bytes(b'{"id": "a", "q": "x"}\n\xef\xbb\xbf{"id": "b", "q": "y"}\n')
+    with pytest.raises(ValueError, match="e.jsonl:2: not valid JSON"):
+        load_eval(p, ["q"])

@@ -82,6 +82,8 @@ def _parse_lines(path: Path, lines: Iterable[bytes]) -> Iterator[dict[str, Any]]
             line = raw.decode("utf-8")
         except UnicodeDecodeError as e:
             raise ValueError(f"{path}:{lineno}: not valid UTF-8: {e.reason}") from e
+        if lineno == 1 and line.startswith("\ufeff"):  # a byte-order mark some editors add
+            line = line[1:]
         if not line.strip():
             continue
         try:

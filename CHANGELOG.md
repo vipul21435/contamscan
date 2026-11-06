@@ -68,3 +68,5 @@
   the status of `--fail-above`.
 - Fix: a Parquet corpus or evaluation set without pyarrow installed exits with status 2
   and a `contamscan: error:` line; before, it exited with status 1.
+- Fix: a UTF-8 byte-order mark at the start of a JSONL file is skipped instead of making
+  the first line invalid JSON.
