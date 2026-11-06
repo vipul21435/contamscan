@@ -75,3 +75,16 @@ def test_fail_above_sets_exit_code(tmp_path):
     base = ["scan", str(ev), str(corpus), "--fields", "prompt"]
     assert main(base + ["--fail-above", "0.5", "--fail-method", "gpt3"]) == 0
     assert main(base + ["--fail-above", "0.2", "--fail-method", "gpt3"]) == 1
+
+
+def test_gpt3_auto_n_and_bad_n(tmp_path):
+    import pytest
+
+    ev, corpus = make(tmp_path, scores=False)
+    out = tmp_path / "r.json"
+    args = ["scan", str(ev), str(corpus), "--fields", "prompt", "--json", str(out)]
+    assert main(args + ["--gpt3-n", "auto"]) == 0
+    assert json.loads(out.read_text())["params"]["gpt3_n"] == 13  # every item has 30 words
+    for bad in ("x", "0"):
+        with pytest.raises(SystemExit):
+            main(args + ["--gpt3-n", bad])

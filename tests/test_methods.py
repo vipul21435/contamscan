@@ -85,3 +85,15 @@ def test_code_tokenizer_keeps_case():
     code = scan(items, corpus, p, tokenizer="code")[0]
     assert word.palm_overlap == 1.0
     assert code.palm_overlap < 1.0
+
+
+def test_gpt3_auto_n_percentile_and_clamp():
+    from contamscan.methods import gpt3_auto_n
+
+    assert gpt3_auto_n([]) == 13
+    assert gpt3_auto_n([3] * 50) == 8  # floor of 8
+    assert gpt3_auto_n([100] * 50) == 13  # ceiling of 13
+    lengths = list(range(1, 101))  # 5th percentile (lower) of 1..100 is 5 -> clamp to 8
+    assert gpt3_auto_n(lengths) == 8
+    assert gpt3_auto_n([10] * 5 + [50] * 95) == 10
+    assert gpt3_auto_n([9, 11, 12] + [40] * 17) == 9

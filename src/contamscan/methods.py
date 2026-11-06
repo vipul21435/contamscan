@@ -24,7 +24,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-__all__ = ["Params", "METHODS", "label_gpt3", "label_palm", "label_llama2", "label_substring"]
+__all__ = [
+    "Params",
+    "METHODS",
+    "gpt3_auto_n",
+    "label_gpt3",
+    "label_palm",
+    "label_llama2",
+    "label_substring",
+]
 
 METHODS = ("gpt3", "palm", "llama2", "substring")
 
@@ -45,6 +53,20 @@ class Params:
     def span_n(self) -> int:
         """n used to chain matches into longest shared spans (the smallest n)."""
         return min(self.ns())
+
+
+def gpt3_auto_n(lengths: list[int], low: int = 8, high: int = 13) -> int:
+    """GPT-3's per-dataset N: the 5th-percentile example length, clamped to [low, high].
+
+    Brown et al. 2020 (Appendix C) use the 5th percentile of example lengths in words, a
+    minimum of 8 "due to spurious collisions at lower values" and a maximum of 13. The
+    percentile is the lower order statistic (no interpolation), so N is a real length.
+    """
+    if not lengths:
+        return high
+    ordered = sorted(lengths)
+    k = int(0.05 * (len(ordered) - 1))
+    return max(low, min(high, ordered[k]))
 
 
 def label_gpt3(matched_grams: int) -> str:

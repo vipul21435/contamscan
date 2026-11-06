@@ -10,14 +10,26 @@ from pathlib import Path
 
 from . import __version__
 from .io import iter_corpus, load_eval
-from .methods import METHODS, Params
+from .methods import METHODS, Params, gpt3_auto_n
 from .report import comparisons, summarise, to_json, to_markdown
 from .scan import scan
-from .text import TOKENIZERS
+from .text import TOKENIZERS, tokenize
 
 
 def _csv(s: str) -> list[str]:
     return [x.strip() for x in s.split(",") if x.strip()]
+
+
+def _n_or_auto(s: str) -> int | str:
+    if s == "auto":
+        return s
+    try:
+        n = int(s)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"expected an integer or 'auto', got {s!r}") from e
+    if n <= 0:
+        raise argparse.ArgumentTypeError("n must be positive")
+    return n
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -36,7 +48,12 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--corpus-id-field", default="id")
     g = s.add_argument_group("methods (defaults from the cited papers; see README)")
     g.add_argument("--tokenizer", choices=TOKENIZERS, default="word")
-    g.add_argument("--gpt3-n", type=int, default=13, help="GPT-3 N (default 13)")
+    g.add_argument(
+        "--gpt3-n",
+        type=_n_or_auto,
+        default=13,
+        help="GPT-3 N (default 13); 'auto' = 5th-percentile item length clamped to [8, 13]",
+    )
     g.add_argument("--palm-n", type=int, default=8, help="PaLM n (default 8)")
     g.add_argument("--palm-threshold", type=float, default=0.70, help="PaLM (default 0.70)")
     g.add_argument("--llama-n", type=int, default=11, help="Llama 2: n-grams longer than 10")
@@ -69,8 +86,12 @@ def _counting(docs, counter):
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    items = load_eval(args.eval, args.fields, args.id_field, args.score_field)
+    gpt3_n = args.gpt3_n
+    if gpt3_n == "auto":
+        gpt3_n = gpt3_auto_n([len(tokenize(it.text, args.tokenizer)) for it in items])
     params = Params(
-        gpt3_n=args.gpt3_n,
+        gpt3_n=gpt3_n,
         palm_n=args.palm_n,
         palm_threshold=args.palm_threshold,
         llama_n=args.llama_n,
@@ -78,7 +99,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         llama_dirty=args.llama_dirty,
         substring_min_tokens=args.substring_min_tokens,
     )
-    items = load_eval(args.eval, args.fields, args.id_field, args.score_field)
     count = [0]
     docs = _counting(iter_corpus(args.corpus, args.corpus_fields, args.corpus_id_field), count)
     t0 = time.perf_counter()
