@@ -7,11 +7,18 @@ from collections import Counter
 from dataclasses import asdict
 from typing import Any
 
-from .bootstrap import compare
+from .bootstrap import compare, relative_change, subset_z
 from .methods import Params
 from .scan import ItemResult
 
-__all__ = ["CONTAMINATED", "summarise", "comparisons", "to_json", "to_markdown"]
+__all__ = [
+    "CONTAMINATED",
+    "LLAMA2_SUBSETS",
+    "summarise",
+    "comparisons",
+    "to_json",
+    "to_markdown",
+]
 
 # which labels count as contaminated for each method
 CONTAMINATED = {
@@ -26,6 +33,15 @@ _LABEL_ATTR = {
     "palm": "palm_label",
     "llama2": "llama2_label",
     "substring": "substring_label",
+}
+
+
+# Llama 2 Appendix A.6: four non-disjoint subsets defined by token contamination
+LLAMA2_SUBSETS = {
+    "clean": {"clean"},
+    "not clean": {"mixed", "dirty"},
+    "not dirty": {"clean", "mixed"},
+    "dirty": {"dirty"},
 }
 
 
@@ -44,29 +60,53 @@ def summarise(results: list[ItemResult]) -> dict[str, Any]:
             "contaminated": flagged,
             "fraction": flagged / n if n else 0.0,
         }
+    out["llama2_subsets"] = {
+        k: sum(r.llama2_label in labels for r in results) for k, labels in LLAMA2_SUBSETS.items()
+    }
     out["any_overlap"] = sum(r.n_matching_docs > 0 for r in results)
     return out
 
 
-def comparisons(results: list[ItemResult], *, n_boot: int = 10_000, seed: int = 0):
-    """Score comparisons per method, when every item has a score.
+def comparisons(
+    results: list[ItemResult], *, n_boot: int = 10_000, seed: int = 0
+) -> dict[str, Any]:
+    """Score comparisons, when every item has a score; ``{}`` otherwise.
 
-    For ``llama2`` two splits are reported, as in the Llama 2 analysis: clean versus not
-    clean, and dirty versus not dirty.
+    * ``differences``: for each method, ``mean(contaminated) - mean(clean)`` with a bootstrap
+      interval. For ``llama2`` this is dirty versus not dirty; ``llama2_not_clean_vs_clean``
+      adds the other Llama 2 split.
+    * ``llama2_subsets``: mean score and ``Z_n`` of the four Llama 2 subsets against the
+      whole set (the paper calls a set affected when all four have ``|Z_n| > 2``).
+    * ``gpt3_clean_vs_full``: the GPT-3 relative change of the clean-only score against the
+      score on all items.
     """
     if not results or any(r.score is None for r in results):
         return {}
-    out: dict[str, Any] = {}
+    scores = [float(r.score) for r in results]  # type: ignore[arg-type]
+    diffs: dict[str, Any] = {}
     for m in _LABEL_ATTR:
         dirty = [r.score for r in results if is_contaminated(r, m)]
         clean = [r.score for r in results if not is_contaminated(r, m)]
         c = compare(clean, dirty, n_boot=n_boot, seed=seed)
-        out[m] = asdict(c) if c else None
+        diffs[m] = asdict(c) if c else None
     clean = [r.score for r in results if r.llama2_label == "clean"]
     rest = [r.score for r in results if r.llama2_label != "clean"]
     c = compare(clean, rest, n_boot=n_boot, seed=seed)
-    out["llama2_not_clean_vs_clean"] = asdict(c) if c else None
-    return out
+    diffs["llama2_not_clean_vs_clean"] = asdict(c) if c else None
+    subsets = []
+    for name, labels in LLAMA2_SUBSETS.items():
+        z = subset_z(scores, [r.llama2_label in labels for r in results], name)
+        subsets.append(asdict(z) if z else {"subset": name, "n": 0})
+    gpt3_clean = [r.score for r in results if not is_contaminated(r, "gpt3")]
+    full_mean = sum(scores) / len(scores)
+    gpt3 = {
+        "n_clean": len(gpt3_clean),
+        "n_full": len(scores),
+        "mean_clean": sum(gpt3_clean) / len(gpt3_clean) if gpt3_clean else None,
+        "mean_full": full_mean,
+        "relative_change": relative_change(gpt3_clean, scores),
+    }
+    return {"differences": diffs, "llama2_subsets": subsets, "gpt3_clean_vs_full": gpt3}
 
 
 def to_json(
@@ -116,24 +156,14 @@ def to_markdown(
             f"| {m} | {rules[m]} | {v['contaminated']} | {_pct(v['fraction'])} | {labels} |"
         )
     lines += ["", f"Items with any shared n-gram: {s['any_overlap']}.", ""]
+    ls = s["llama2_subsets"]
+    lines += [
+        f"Llama 2 subsets: clean {ls['clean']}, not clean {ls['not clean']}, "
+        f"not dirty {ls['not dirty']}, dirty {ls['dirty']}.",
+        "",
+    ]
     if comp:
-        lines += [
-            "## Scores on clean and contaminated items",
-            "",
-            "| split | n clean | n contaminated | mean clean | mean contaminated | "
-            "difference | 95% interval |",
-            "|---|---:|---:|---:|---:|---:|---|",
-        ]
-        for m, c in comp.items():
-            if c is None:
-                lines.append(f"| {m} | - | - | - | - | - | one group empty |")
-                continue
-            lines.append(
-                f"| {m} | {c['n_clean']} | {c['n_contaminated']} | {c['mean_clean']:.3f} | "
-                f"{c['mean_contaminated']:.3f} | {c['difference']:+.3f} | "
-                f"[{c['low']:+.3f}, {c['high']:+.3f}] |"
-            )
-        lines.append("")
+        lines += _markdown_scores(comp)
     ranked = sorted(
         (r for r in results if r.matches),
         key=lambda r: (-r.llama2_coverage, -r.longest_match_tokens),
@@ -159,3 +189,50 @@ def to_markdown(
                 "",
             ]
     return "\n".join(lines)
+
+
+def _f(x: float | None, fmt: str = ".3f") -> str:
+    return "n/a" if x is None else format(x, fmt)
+
+
+def _markdown_scores(comp: dict[str, Any]) -> list[str]:
+    lines = [
+        "## Scores on clean and contaminated items",
+        "",
+        "| split | n clean | n contaminated | mean clean | mean contaminated | "
+        "difference | 95% interval |",
+        "|---|---:|---:|---:|---:|---:|---|",
+    ]
+    for m, c in comp["differences"].items():
+        if c is None:
+            lines.append(f"| {m} | - | - | - | - | - | one group empty |")
+            continue
+        lines.append(
+            f"| {m} | {c['n_clean']} | {c['n_contaminated']} | {c['mean_clean']:.3f} | "
+            f"{c['mean_contaminated']:.3f} | {c['difference']:+.3f} | "
+            f"[{c['low']:+.3f}, {c['high']:+.3f}] |"
+        )
+    lines += [
+        "",
+        "Llama 2 subsets against the whole set (Z = (mean - mu_n) / sigma_n):",
+        "",
+        "| subset | n | mean | mu_n | sigma_n | Z |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    for z in comp["llama2_subsets"]:
+        if not z["n"]:
+            lines.append(f"| {z['subset']} | 0 | - | - | - | - |")
+            continue
+        lines.append(
+            f"| {z['subset']} | {z['n']} | {z['mean']:.3f} | {z['mu']:.3f} | "
+            f"{z['sigma']:.3f} | {_f(z['z'], '+.2f')} |"
+        )
+    g = comp["gpt3_clean_vs_full"]
+    lines += [
+        "",
+        f"GPT-3 clean-only score {_f(g['mean_clean'])} on {g['n_clean']} items against "
+        f"{g['mean_full']:.3f} on all {g['n_full']}: relative change "
+        f"{_f(None if g['relative_change'] is None else 100 * g['relative_change'], '+.1f')} %.",
+        "",
+    ]
+    return lines

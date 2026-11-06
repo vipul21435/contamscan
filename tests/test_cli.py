@@ -51,9 +51,22 @@ def test_scan_writes_reports(tmp_path, capsys):
     assert rep["summary"]["methods"]["gpt3"]["contaminated"] == 2
     q0 = rep["items"][0]
     assert q0["matches"][0]["doc_id"] == "d0" and q0["matches"][0]["exact"]
-    assert rep["comparison"]["gpt3"]["n_contaminated"] == 2
+    comp = rep["comparison"]
+    assert comp["differences"]["gpt3"]["n_contaminated"] == 2
+    subsets = {z["subset"]: z for z in comp["llama2_subsets"]}
+    assert subsets["dirty"]["n"] == 1 and subsets["not dirty"]["n"] == 5
+    # q2 shares 15 of its 30 words with d1: not clean, not dirty
+    assert subsets["clean"]["n"] == 4 and subsets["not clean"]["n"] == 2
+    assert comp["gpt3_clean_vs_full"]["n_clean"] == 4
+    assert rep["summary"]["llama2_subsets"] == {
+        "clean": 4,
+        "not clean": 2,
+        "not dirty": 5,
+        "dirty": 1,
+    }
     md = out_md.read_text()
     assert "### q0" in md and "exact containment" in md and "Scores on clean" in md
+    assert "| dirty | 1 |" in md and "relative change" in md
     assert "6 items, 2 documents" in capsys.readouterr().out
 
 
