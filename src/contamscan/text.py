@@ -8,8 +8,13 @@ Two tokenisers are provided:
   keeps case, because in code ``Foo`` and ``foo`` are different names and punctuation
   such as ``(`` or ``:`` carries structure.
 
-Every token carries the character span it came from, so a match can be reported as an
-offset range in the original text.
+In both, combining marks stay inside the word they follow, each token's text is
+NFKC-normalised (so NFC, NFD and fullwidth copies give the same tokens), and every Han,
+hiragana or katakana character is a token of its own, because Chinese and Japanese are
+written without spaces between words.
+
+Every token carries the character span it came from in the raw text, so a match can be
+reported as an offset range in the original text.
 """
 
 from __future__ import annotations
@@ -20,9 +25,32 @@ from dataclasses import dataclass
 
 __all__ = ["Token", "normalise", "tokenize", "TOKENIZERS"]
 
-_WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
-# identifiers, numbers (int/float), then any single non-space character
-_CODE_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|\S")
+
+def _mark_class() -> str:
+    """Regex class body for every combining mark (Unicode category M)."""
+    ranges: list[list[int]] = []
+    for c in range(0x20000):
+        if unicodedata.category(chr(c)).startswith("M"):
+            if ranges and ranges[-1][1] == c - 1:
+                ranges[-1][1] = c
+            else:
+                ranges.append([c, c])
+    ranges.append([0xE0100, 0xE01EF])  # variation selectors supplement
+    return "".join(f"\\U{a:08x}-\\U{b:08x}" for a, b in ranges)
+
+
+_MARK = _mark_class()
+# Han (with extensions and compatibility ideographs), hiragana, katakana (not the
+# katakana middle dot, which is punctuation)
+_CJK = (
+    "\\u3040-\\u30fa\\u30fc-\\u30ff\\u31f0-\\u31ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff"
+    "\\uff66-\\uff9f\\U00020000-\\U0003134f"
+)
+_WORD_RE = re.compile(rf"[{_CJK}]|(?:[^\W_{_CJK}]|[{_MARK}])+")
+# CJK characters, identifiers, numbers (int/float), then any single non-space character
+_CODE_RE = re.compile(
+    rf"[{_CJK}]|(?:[^\W\d{_CJK}]|[{_MARK}])(?:[^\W{_CJK}]|[{_MARK}])*|\d+(?:\.\d+)?|\S"
+)
 _PUNCT_RE = re.compile(r"[^\w\s]|_", re.UNICODE)
 _WS_RE = re.compile(r"\s+")
 
@@ -57,10 +85,15 @@ def normalise(
 def tokenize(text: str, mode: str = "word") -> list[Token]:
     """Split ``text`` into tokens with character offsets into ``text``.
 
-    ``word`` tokens are case-folded; ``code`` tokens keep case.
+    Token texts are NFKC-normalised; ``word`` tokens are also case-folded, ``code`` tokens
+    keep case. Offsets are those of the raw match.
     """
+    nfkc = unicodedata.normalize
     if mode == "word":
-        return [Token(m.group().casefold(), m.start(), m.end()) for m in _WORD_RE.finditer(text)]
+        return [
+            Token(nfkc("NFKC", m.group()).casefold(), m.start(), m.end())
+            for m in _WORD_RE.finditer(text)
+        ]
     if mode == "code":
-        return [Token(m.group(), m.start(), m.end()) for m in _CODE_RE.finditer(text)]
+        return [Token(nfkc("NFKC", m.group()), m.start(), m.end()) for m in _CODE_RE.finditer(text)]
     raise ValueError(f"unknown tokenizer {mode!r}; choose one of {TOKENIZERS}")

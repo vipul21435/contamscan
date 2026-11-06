@@ -37,3 +37,7 @@
 - Fix: the longest-run search no longer stores every (item position, document position)
   pair of the chaining n-gram, which took quadratic memory on documents with repeated
   separator lines; runs are now extended while walking the document.
+- Fix: token texts are NFKC-normalised and combining marks stay inside words, so NFD and
+  fullwidth copies of an item are found by the n-gram methods (before, only the
+  containment check normalised); Han, hiragana and katakana characters are now one token
+  each, so Chinese and Japanese items are no longer one token per clause.

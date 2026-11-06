@@ -114,7 +114,11 @@ All four Llama 2 subsets have |Z| > 2, the paper's condition for calling a set a
 whitespace, which follows the GPT-3 rule of comparing words "ignoring all punctuation,
 whitespace, and casing". `--tokenizer code` keeps case and emits identifiers, numbers and
 each operator character as tokens, because `Foo`/`foo` differ in code and punctuation
-carries structure. Every token keeps its character span. The text of an item is its
+carries structure. In both, combining marks stay in their word, each token's text is
+NFKC-normalised (an NFD or fullwidth copy gives the same tokens as the original), and each
+Han, hiragana and katakana character is a token of its own, since Chinese and Japanese put
+no spaces between words; character n-grams are the usual unit for such text. Every token
+keeps its character span in the raw text. The text of an item is its
 `--fields` joined by newlines. Exact containment is checked on the raw text and on a
 normalised form (NFKC, case-folded, punctuation removed, whitespace collapsed).
 
@@ -396,6 +400,9 @@ was considered and not used because its card states no licence.
 - Whole-item containment is found only through the word anchor: an item whose normalised
   text has one or two words must occur as whole words, and an item with no letters or
   digits (punctuation only) is never checked for containment.
+- Other scripts written without spaces (Thai, Lao, Khmer, Burmese) are still split only at
+  spaces and punctuation by `--tokenizer word`, so a long clause is one token; Korean
+  Hangul is split into words, not syllables.
 - No fuzzy or embedding-based matching: paraphrased, renamed or translated items are not
   found.
 - The real-data results above have no model scores, so the effect on scores is shown only
