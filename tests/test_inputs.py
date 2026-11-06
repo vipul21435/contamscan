@@ -174,3 +174,38 @@ def test_nested_eval_fields_are_flattened_to_their_string_leaves(tmp_path):
     (item,) = load_eval(ev, ["question", "choices"])
     assert item.text == "Où coule le Rhône ?\nLyon\nGenève\n3"
     assert item.field_spans[1] == ("choices", 20, len(item.text))
+
+
+def _gz_corpus(tmp_path, n=400):
+    rows = [{"id": f"d{k}", "text": f"record {k} " + ITEM} for k in range(n)]
+    f = tmp_path / "full.jsonl.gz"
+    with gzip.open(f, "wt") as fh:
+        fh.writelines(json.dumps(r) + "\n" for r in rows)
+    return f.read_bytes()
+
+
+@pytest.mark.parametrize("damage", ["truncate", "flip"])
+@pytest.mark.parametrize("workers", ["1", "2"])
+def test_corrupt_gzip_corpus_is_status_2_without_traceback(tmp_path, ev, capsys, damage, workers):
+    data = _gz_corpus(tmp_path)
+    if damage == "truncate":
+        data = data[: len(data) // 2]
+    else:
+        mid = len(data) // 2
+        data = data[:mid] + bytes(b ^ 0xFF for b in data[mid : mid + 64]) + data[mid + 64 :]
+    f = tmp_path / "bad.jsonl.gz"
+    f.write_bytes(data)
+    assert main(["scan", str(ev), str(f), "--fail-above", "0.5", "--workers", workers]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("contamscan: error:") and "Traceback" not in err
+    assert "bad.jsonl.gz" in err and "corrupt gzip" in err
+
+
+def test_corrupt_gzip_eval_set_is_a_usage_error(tmp_path, capsys):
+    f = tmp_path / "e.jsonl.gz"
+    f.write_bytes(_gz_corpus(tmp_path)[:300])
+    corpus = _write(tmp_path / "c.jsonl", [{"text": ITEM}])
+    with pytest.raises(SystemExit) as e:
+        main(["scan", str(f), str(corpus)])
+    assert e.value.code == 2
+    assert "corrupt gzip" in capsys.readouterr().err

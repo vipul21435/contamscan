@@ -155,8 +155,8 @@ when the input cannot give a meaningful answer: an empty evaluation set, a `--fi
 absent from every evaluation record (a misspelt field would otherwise give every item empty
 text and a 0 % rate), a score that is not a finite number, a corpus in which no document
 has any text, a malformed corpus record (truncated JSON, bytes that are not UTF-8, a line
-that is not a JSON object; the message names the file and line), a corpus file of an
-unsupported type, or a report directory that does not exist (checked before the scan). A
+that is not a JSON object; the message names the file and line), a truncated or corrupt
+`.jsonl.gz` file, a corpus file of an unsupported type, or a report directory that does not exist (checked before the scan). A
 field missing from only some records, a `--corpus-fields` name found in no record,
 documents with empty text and files skipped in corpus directories are reported as warnings
 on stderr.

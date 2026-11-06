@@ -63,3 +63,6 @@
 - Fix: a field holding a list or an object (a chat `messages` list, answer choices) is
   read as its string values, one per line; before, it was matched as JSON text with
   escapes and quotes, so a verbatim copy in a chat corpus was missed by every method.
+- Fix: a truncated or corrupt `.jsonl.gz` file (corpus or evaluation set) is an input
+  error with exit status 2; before, the gzip error escaped as a traceback with status 1,
+  the status of `--fail-above`.

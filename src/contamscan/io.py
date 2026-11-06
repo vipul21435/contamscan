@@ -11,8 +11,9 @@ from __future__ import annotations
 import gzip
 import json
 import math
+import zlib
 from collections import Counter
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -62,22 +63,32 @@ def iter_records(
     if kind == ".parquet":
         yield from _iter_parquet(path, columns)
         return
-    opener = gzip.open if kind == ".jsonl.gz" else open
-    with opener(path, "rb") as fh:
-        for lineno, raw in enumerate(fh, 1):
-            try:
-                line = raw.decode("utf-8")
-            except UnicodeDecodeError as e:
-                raise ValueError(f"{path}:{lineno}: not valid UTF-8: {e.reason}") from e
-            if not line.strip():
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"{path}:{lineno}: not valid JSON: {e}") from e
-            if not isinstance(rec, dict):
-                raise ValueError(f"{path}:{lineno}: expected a JSON object")
-            yield rec
+    if kind != ".jsonl.gz":
+        with open(path, "rb") as fh:
+            yield from _parse_lines(path, fh)
+        return
+    try:
+        with gzip.open(path, "rb") as gz:
+            yield from _parse_lines(path, gz)
+    except (EOFError, zlib.error, gzip.BadGzipFile) as e:
+        raise ValueError(f"{path}: truncated or corrupt gzip: {e}") from e
+
+
+def _parse_lines(path: Path, lines: Iterable[bytes]) -> Iterator[dict[str, Any]]:
+    for lineno, raw in enumerate(lines, 1):
+        try:
+            line = raw.decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise ValueError(f"{path}:{lineno}: not valid UTF-8: {e.reason}") from e
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"{path}:{lineno}: not valid JSON: {e}") from e
+        if not isinstance(rec, dict):
+            raise ValueError(f"{path}:{lineno}: expected a JSON object")
+        yield rec
 
 
 def _leaves(v: Any) -> Iterator[str]:
