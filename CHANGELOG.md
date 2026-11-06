@@ -19,3 +19,8 @@
 - `contamscan scan` with JSON and Markdown reports and `--fail-above` for CI.
 - Examples: fetch and convert HumanEval, MBPP, CodeAlpaca-20k and self-oss-instruct; run and
   summarise the code audit; plot token coverage; seeded synthetic score comparison.
+- Fix: whole-item containment (raw and normalised) is now checked for every item against
+  every document through a tokenizer-independent word anchor. Before, it ran only for items
+  that already shared an n-gram with the document, and a contained item whose shared span
+  was empty was dropped, so re-cased copies were missed with the code tokenizer.
+  Containment matches are kept first under `--max-matches`.

@@ -41,7 +41,7 @@ A real run, HumanEval against the 50,661 records of a public code SFT set (see
 ```text
 $ contamscan scan data/jsonl/humaneval.jsonl data/raw/self_oss_instruct_50k.parquet \
     --fields prompt,solution --corpus-fields instruction,response --tokenizer code --workers 4
-164 items, 50661 documents, 7.6 s
+164 items, 50661 documents, 11.2 s
   gpt3           80 contaminated (48.8%)
   palm            0 contaminated (0.0%)
   llama2          0 contaminated (0.0%)
@@ -115,9 +115,9 @@ drawn from small vocabularies.
 | method | quantity | label | source of the default |
 |---|---|---|---|
 | `gpt3` | matched 13-grams / g_13 | `dirty` if any 13-gram is shared; items shorter than 13 tokens are matched whole | Brown et al. 2020, Appendix C ([arXiv 2005.14165](https://arxiv.org/abs/2005.14165)) |
-| `palm` | matched 8-grams / g_8 | `contaminated` if >= 0.70 | Chowdhery et al. 2022, Section 8 ([arXiv 2204.02311](https://arxiv.org/abs/2204.02311)) |
+| `palm` | matched 8-grams / g_8 | `contaminated` if >= 0.70; `too-short` (never counted as contaminated) if the item has fewer than 8 tokens | Chowdhery et al. 2022, Section 8 ([arXiv 2204.02311](https://arxiv.org/abs/2204.02311)) |
 | `llama2` | tokens inside any matched 11-gram / k | `clean` < 0.20, `dirty` >= 0.80, `mixed` between | Touvron et al. 2023, Appendix A.6 ([arXiv 2307.09288](https://arxiv.org/abs/2307.09288)) |
-| `substring` | longest run of tokens shared with one document | `exact` if the whole item text is contained (raw or normalised), `long-match` if the run is >= 50 tokens | this tool's choice |
+| `substring` | longest run of tokens shared with one document | `exact` if the whole item text is contained in a document (raw or normalised), `long-match` if the run is >= 50 tokens | this tool's choice |
 
 Flags and where their defaults come from:
 
@@ -147,8 +147,22 @@ Flags and where their defaults come from:
 
 The longest run is found by chaining matches of the smallest n along a diagonal (item
 position p and document position j, then p+1 and j+1, ...); a run of r matching n-grams is a
-shared span of r + n - 1 tokens. For each item the report keeps the `--max-matches`
-documents with the longest spans, with character offsets in both the item and the document.
+shared span of r + n - 1 tokens.
+
+Whole-item containment is checked for every item against every document, independently of
+the n-gram index and of `--tokenizer`, so an item re-cased or re-indented in a document is
+found even when the code tokenizer shares no n-gram with it. A second small index holds, for
+each item, a hash of up to 8 consecutive words of its normalised text (leaving out the first
+and last word, which a document may cut mid-word); each document's normalised words are
+looked up in it and only the items found there are compared in full, raw and normalised.
+
+A document is reported for an item when it shares a run of at least the smallest n (8 by
+default) or contains the whole item; other documents, even ones sharing shorter runs, are
+not listed. For each item the report keeps the `--max-matches` documents, containment first
+and then the longest spans, with character offsets in both the item and the document. A
+containment match counts all the item's tokens as shared and covers the whole item; for a
+normalised-only hit, the document offsets run from the start of the first to the end of
+the last whitespace-delimited chunk holding the matched words.
 
 **Score comparison.** When `--score-field` is set the report has three parts.
 
@@ -186,38 +200,38 @@ bash examples/run_code_audit.sh data runs 4               # 24 scans, 4 worker p
 python examples/summarise_runs.py runs
 ```
 
-The 24 scans took 2 min 43 s of wall time in total on an 8-core laptop that was running
+The 24 scans took 2 min 21 s of wall time in total on an 8-core laptop that was running
 other jobs at the same time, so the times below are an upper bound rather than a benchmark. Items flagged (N is the
 GPT-3 n-gram size used; `auto` chose 13 everywhere because the 5th-percentile item is
 longer than 13 tokens; "any overlap" counts items sharing at least one n-gram of any
-size used):
+size used with some document, or contained whole in one):
 
 | eval | corpus | tokenizer | flags | N | gpt3 dirty | palm | llama2 dirty | llama2 not clean | substring | any overlap | scan s | wall s |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| humaneval | code_alpaca_20k | word | default | 13 | 7 (4.3 %) | 0 | 0 | 3 (1.8 %) | 0 | 55 | 0.9 | 1.0 |
-| humaneval | code_alpaca_20k | word | paper | 13 | 7 (4.3 %) | 1 (0.6 %) | 0 | 3 (1.8 %) | 0 | 55 | 0.8 | 0.9 |
-| humaneval | code_alpaca_20k | word | skip4 | 13 | 7 (4.3 %) | 0 | 0 | 3 (1.8 %) | 0 | 55 | 0.8 | 0.9 |
-| humaneval | code_alpaca_20k | code | default | 13 | 53 (32.3 %) | 0 | 0 | 18 (11.0 %) | 0 | 139 | 1.3 | 1.4 |
-| humaneval | code_alpaca_20k | code | paper | 13 | 48 (29.3 %) | 1 (0.6 %) | 0 | 16 (9.8 %) | 0 | 139 | 2.2 | 2.4 |
-| humaneval | code_alpaca_20k | code | skip4 | 13 | 53 (32.3 %) | 0 | 0 | 19 (11.6 %) | 0 | 139 | 1.7 | 1.8 |
-| humaneval | self_oss_instruct_50k | word | default | 13 | 15 (9.1 %) | 0 | 0 | 8 (4.9 %) | 0 | 94 | 6.8 | 7.0 |
-| humaneval | self_oss_instruct_50k | word | paper | 13 | 14 (8.5 %) | 2 (1.2 %) | 0 | 8 (4.9 %) | 0 | 94 | 7.1 | 7.2 |
-| humaneval | self_oss_instruct_50k | word | skip4 | 13 | 15 (9.1 %) | 0 | 0 | 8 (4.9 %) | 0 | 94 | 8.1 | 8.2 |
-| humaneval | self_oss_instruct_50k | code | default | 13 | 80 (48.8 %) | 0 | 0 | 52 (31.7 %) | 4 (2.4 %) | 160 | 12.0 | 12.2 |
-| humaneval | self_oss_instruct_50k | code | paper | 13 | 76 (46.3 %) | 2 (1.2 %) | 0 | 39 (23.8 %) | 4 (2.4 %) | 160 | 12.3 | 12.6 |
-| humaneval | self_oss_instruct_50k | code | skip4 | 13 | 80 (48.8 %) | 0 | 0 | 52 (31.7 %) | 4 (2.4 %) | 160 | 14.2 | 14.4 |
-| mbpp_test | code_alpaca_20k | word | default | 13 | 19 (3.8 %) | 0 | 0 | 28 (5.6 %) | 1 (0.2 %) | 163 | 1.4 | 1.5 |
-| mbpp_test | code_alpaca_20k | word | paper | 13 | 19 (3.8 %) | 3 (0.6 %) | 0 | 28 (5.6 %) | 1 (0.2 %) | 163 | 1.3 | 1.4 |
-| mbpp_test | code_alpaca_20k | word | skip4 | 13 | 19 (3.8 %) | 0 | 0 | 28 (5.6 %) | 1 (0.2 %) | 163 | 1.3 | 1.5 |
-| mbpp_test | code_alpaca_20k | code | default | 13 | 88 (17.6 %) | 1 (0.2 %) | 1 (0.2 %) | 83 (16.6 %) | 1 (0.2 %) | 289 | 2.0 | 2.2 |
-| mbpp_test | code_alpaca_20k | code | paper | 13 | 85 (17.0 %) | 4 (0.8 %) | 1 (0.2 %) | 79 (15.8 %) | 1 (0.2 %) | 289 | 1.6 | 1.8 |
-| mbpp_test | code_alpaca_20k | code | skip4 | 13 | 88 (17.6 %) | 1 (0.2 %) | 1 (0.2 %) | 83 (16.6 %) | 1 (0.2 %) | 289 | 1.6 | 1.8 |
-| mbpp_test | self_oss_instruct_50k | word | default | 13 | 12 (2.4 %) | 0 | 0 | 25 (5.0 %) | 0 | 202 | 9.1 | 9.3 |
-| mbpp_test | self_oss_instruct_50k | word | paper | 13 | 12 (2.4 %) | 5 (1.0 %) | 0 | 25 (5.0 %) | 0 | 202 | 8.8 | 9.0 |
-| mbpp_test | self_oss_instruct_50k | word | skip4 | 13 | 12 (2.4 %) | 0 | 0 | 26 (5.2 %) | 0 | 202 | 9.4 | 9.6 |
-| mbpp_test | self_oss_instruct_50k | code | default | 13 | 105 (21.0 %) | 0 | 0 | 108 (21.6 %) | 0 | 330 | 15.5 | 15.7 |
-| mbpp_test | self_oss_instruct_50k | code | paper | 13 | 100 (20.0 %) | 0 | 0 | 96 (19.2 %) | 0 | 330 | 14.6 | 14.9 |
-| mbpp_test | self_oss_instruct_50k | code | skip4 | 13 | 105 (21.0 %) | 0 | 0 | 110 (22.0 %) | 0 | 330 | 23.2 | 23.5 |
+| humaneval | code_alpaca_20k | word | default | 13 | 7 (4.3 %) | 0 | 0 | 3 (1.8 %) | 0 | 55 | 1.2 | 1.3 |
+| humaneval | code_alpaca_20k | word | paper | 13 | 7 (4.3 %) | 1 (0.6 %) | 0 | 3 (1.8 %) | 0 | 55 | 1.4 | 1.5 |
+| humaneval | code_alpaca_20k | word | skip4 | 13 | 7 (4.3 %) | 0 | 0 | 3 (1.8 %) | 0 | 55 | 1.4 | 1.5 |
+| humaneval | code_alpaca_20k | code | default | 13 | 53 (32.3 %) | 0 | 0 | 18 (11.0 %) | 0 | 139 | 1.5 | 1.6 |
+| humaneval | code_alpaca_20k | code | paper | 13 | 48 (29.3 %) | 1 (0.6 %) | 0 | 16 (9.8 %) | 0 | 139 | 1.5 | 1.7 |
+| humaneval | code_alpaca_20k | code | skip4 | 13 | 53 (32.3 %) | 0 | 0 | 19 (11.6 %) | 0 | 139 | 1.5 | 1.6 |
+| humaneval | self_oss_instruct_50k | word | default | 13 | 15 (9.1 %) | 0 | 0 | 8 (4.9 %) | 0 | 94 | 8.2 | 8.4 |
+| humaneval | self_oss_instruct_50k | word | paper | 13 | 14 (8.5 %) | 2 (1.2 %) | 0 | 8 (4.9 %) | 0 | 94 | 7.4 | 7.5 |
+| humaneval | self_oss_instruct_50k | word | skip4 | 13 | 15 (9.1 %) | 0 | 0 | 8 (4.9 %) | 0 | 94 | 7.9 | 8.0 |
+| humaneval | self_oss_instruct_50k | code | default | 13 | 80 (48.8 %) | 0 | 0 | 52 (31.7 %) | 4 (2.4 %) | 160 | 11.2 | 11.3 |
+| humaneval | self_oss_instruct_50k | code | paper | 13 | 76 (46.3 %) | 2 (1.2 %) | 0 | 39 (23.8 %) | 4 (2.4 %) | 160 | 10.8 | 11.0 |
+| humaneval | self_oss_instruct_50k | code | skip4 | 13 | 80 (48.8 %) | 0 | 0 | 52 (31.7 %) | 4 (2.4 %) | 160 | 10.2 | 10.4 |
+| mbpp_test | code_alpaca_20k | word | default | 13 | 19 (3.8 %) | 0 | 0 | 28 (5.6 %) | 1 (0.2 %) | 163 | 1.3 | 1.4 |
+| mbpp_test | code_alpaca_20k | word | paper | 13 | 19 (3.8 %) | 3 (0.6 %) | 0 | 28 (5.6 %) | 1 (0.2 %) | 163 | 1.5 | 1.7 |
+| mbpp_test | code_alpaca_20k | word | skip4 | 13 | 19 (3.8 %) | 0 | 0 | 28 (5.6 %) | 1 (0.2 %) | 163 | 1.3 | 1.4 |
+| mbpp_test | code_alpaca_20k | code | default | 13 | 88 (17.6 %) | 1 (0.2 %) | 1 (0.2 %) | 83 (16.6 %) | 1 (0.2 %) | 289 | 1.8 | 1.9 |
+| mbpp_test | code_alpaca_20k | code | paper | 13 | 85 (17.0 %) | 4 (0.8 %) | 1 (0.2 %) | 79 (15.8 %) | 1 (0.2 %) | 289 | 1.8 | 1.9 |
+| mbpp_test | code_alpaca_20k | code | skip4 | 13 | 88 (17.6 %) | 1 (0.2 %) | 1 (0.2 %) | 83 (16.6 %) | 1 (0.2 %) | 289 | 1.5 | 1.6 |
+| mbpp_test | self_oss_instruct_50k | word | default | 13 | 12 (2.4 %) | 0 | 0 | 25 (5.0 %) | 0 | 202 | 6.7 | 6.8 |
+| mbpp_test | self_oss_instruct_50k | word | paper | 13 | 12 (2.4 %) | 5 (1.0 %) | 0 | 25 (5.0 %) | 0 | 202 | 7.1 | 7.2 |
+| mbpp_test | self_oss_instruct_50k | word | skip4 | 13 | 12 (2.4 %) | 0 | 0 | 26 (5.2 %) | 0 | 202 | 8.7 | 8.8 |
+| mbpp_test | self_oss_instruct_50k | code | default | 13 | 105 (21.0 %) | 0 | 0 | 108 (21.6 %) | 0 | 330 | 11.3 | 11.4 |
+| mbpp_test | self_oss_instruct_50k | code | paper | 13 | 100 (20.0 %) | 0 | 0 | 96 (19.2 %) | 0 | 330 | 12.3 | 12.6 |
+| mbpp_test | self_oss_instruct_50k | code | skip4 | 13 | 105 (21.0 %) | 0 | 0 | 110 (22.0 %) | 0 | 330 | 18.0 | 18.2 |
 
 `--workers` on the HumanEval against self-oss-instruct scan with the code tokenizer, in a
 separate, quieter run: 19.8 s with 1 process, 6.7 s with 4, 6.2 s with 8 (scan time as
@@ -275,7 +289,7 @@ CodeAlpaca-20k, 20 in each of five forms, each appended to the output of a diffe
 random record (seed 0), and leaves 64 unplanted:
 
 ```bash
-python examples/planted_recall.py data runs/planted   # 4.6 s wall time, 4 scans
+python examples/planted_recall.py data runs/planted   # 5.5 s wall time, 4 scans
 ```
 
 Items flagged, out of the number in the "items" column (word and code tokenizer, each
@@ -292,7 +306,7 @@ with and without `--llama-skip-budget 4`; the `skip4` rows differ only where sho
 | code | full | 20 | 20 | 20 | 20 | 20 | 20 |
 | code | prompt only | 20 | 20 | 10 | 4 | 20 | 18 |
 | code | solution only | 20 | 17 | 0 | 0 | 17 | 6 |
-| code | recased | 20 | 13 | 0 | 0 | 8 | 12 |
+| code | recased | 20 | 13 | 0 | 0 | 8 | 20 |
 | code | edited | 20 | 8 | 0 | 0 | 5 (skip4: 7) | 0 |
 | code | not planted | 64 | 27 | 0 | 0 | 12 | 1 |
 
@@ -301,8 +315,8 @@ leaks (prompt or solution), PaLM and Llama 2 dirty, which ask for most of the it
 half or more of them, while the any-13-gram rule and the Llama 2 not-clean subset still catch
 them; the price is the false flags on unplanted items (5 of 64 with words, 27 of 64 with
 code tokens). The word tokenizer is blind to case and layout, the code tokenizer is not,
-and there the normalised containment check (`substring`) recovers 12 of the 20 recased
-items. Dense edits defeat every exact n-gram method; the approximate skipgram budget
+and there the normalised containment check (`substring`) finds all 20 recased items,
+while the n-gram methods flag at most 13 of them. Dense edits defeat every exact n-gram method; the approximate skipgram budget
 recovers one or two more items only in the not-clean count.
 
 ### Scores and data sources
@@ -341,6 +355,9 @@ was considered and not used because its card states no licence.
 - A JSON array corpus file is not supported; convert it to JSONL (see
   `examples/prepare_code_data.py`). With joined fields an n-gram may span two fields;
   `--palm-per-field` changes only the PaLM fraction.
+- Whole-item containment is found only through the word anchor: an item whose normalised
+  text has one or two words must occur as whole words, and an item with no letters or
+  digits (punctuation only) is never checked for containment.
 - No fuzzy or embedding-based matching: paraphrased, renamed or translated items are not
   found.
 - The real-data results above have no model scores, so the effect on scores is shown only

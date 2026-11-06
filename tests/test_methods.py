@@ -161,3 +161,47 @@ def test_skipgram_cover_rules():
     assert skipgram_cover(runs, 4, 11) == set(range(0, 20))
     # runs on different diagonals are never joined
     assert skipgram_cover([(10, 0, 0), (10, 11, 30)], 4, 11) == set()
+
+
+def test_recased_code_item_is_exact_without_any_shared_ngram():
+    # code tokens keep case, so the upper-cased copy shares no n-gram with the item
+    item = "def add_two(a, b):\n    return a + b\n"
+    doc = "notes\nDEF ADD_TWO(A, B):\n\tRETURN A + B\nend"
+    r = scan([EvalItem("c", item)], [("d", doc)], Params(), tokenizer="code")[0]
+    assert r.gpt3_label == "clean" and r.palm_overlap == 0.0
+    assert r.substring_label == "exact" and r.n_matching_docs == 1
+    m = r.matches[0]
+    assert m.exact_normalised and not m.exact
+    assert doc[m.doc_start : m.doc_end] == "DEF ADD_TWO(A, B):\n\tRETURN A + B"
+    assert (m.item_start, m.item_end) == (0, len(item))
+
+
+def test_short_item_contained_mid_text_and_raw_offsets():
+    # two-word items must match whole words; raw hits report the raw offsets
+    r = run("Alpha, beta", ["x alpha beta y"])
+    assert r.substring_label == "exact" and r.matches[0].exact_normalised
+    assert run("alpha beta", ["xalpha betay"]).substring_label == "clean"
+    doc = "pre Alpha, beta post"
+    m = run("Alpha, beta", [doc]).matches[0]
+    assert m.exact and doc[m.doc_start : m.doc_end] == "Alpha, beta"
+
+
+def test_normalised_hit_survives_the_match_cap():
+    item = text(0, 30)
+    long_docs = [text(0, 29)] * 4  # 29 shared tokens each, not contained
+    docs = long_docs + ["see " + item.upper().replace(" ", "  ")]
+    r = scan([EvalItem("q", item)], [(str(k), d) for k, d in enumerate(docs)], max_matches=2)[0]
+    assert r.substring_label == "exact"
+    assert r.matches[0].doc_id == "4" and r.matches[0].exact_normalised
+
+
+def test_normalised_offsets_fall_back_to_whole_document(monkeypatch):
+    import contamscan.scan as sc
+
+    assert sc._norm_word_spans("a.b  c") == [(0, 3), (0, 3), (5, 6)]
+    # if chunk-wise normalisation ever disagrees with the whole-text one, the match
+    # covers the whole document instead of pointing at the wrong words
+    monkeypatch.setattr(sc, "_norm_word_spans", lambda text: [])
+    doc = "x ALPHA BETA GAMMA"
+    m = run("alpha beta gamma", [doc]).matches[0]
+    assert m.exact_normalised and (m.doc_start, m.doc_end) == (0, len(doc))

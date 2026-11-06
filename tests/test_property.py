@@ -151,3 +151,31 @@ def test_skip_budget_coverage_matches_direct_runs(seed):
                     cov.update(range(p, p + length))
             cov |= skipgram_cover(runs, 3, 9)
         assert r.llama2_coverage == pytest.approx(len(cov) / len(t))
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_containment_matches_brute_force_with_code_tokens(seed):
+    from contamscan.text import normalise
+
+    rng = random.Random(300 + seed)
+    vocab = ["ab", "Cd", "e_f", "(", ")", ":", "Gh1"]
+    items = [
+        EvalItem(f"i{i}", " ".join(rng.choice(vocab) for _ in range(rng.randint(1, 12))))
+        for i in range(10)
+    ]
+    docs = []
+    for d in range(10):
+        words = [rng.choice(vocab) for _ in range(rng.randint(0, 30))]
+        if rng.random() < 0.7:
+            planted = rng.choice(items).text
+            planted = rng.choice([planted, planted.upper(), planted.swapcase()])
+            words.insert(rng.randint(0, len(words)), planted)
+        docs.append((f"d{d}", " ".join(words)))
+    res = scan(items, docs, Params(gpt3_n=13, palm_n=8, llama_n=11), tokenizer="code")
+    for it, r in zip(items, res, strict=True):
+        nt = normalise(it.text)
+        # the vocabulary keeps whole words apart, so containment is word-aligned here
+        expected = bool(nt) and any(
+            it.text in d or f" {nt} " in f" {normalise(d)} " for _, d in docs
+        )
+        assert (r.substring_label == "exact") == expected, it.text

@@ -9,6 +9,7 @@ proportional to the evaluation set, not the corpus.
 from __future__ import annotations
 
 import multiprocessing as mp
+import re
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
@@ -68,8 +69,34 @@ class _DocHits:
     positions: dict[int, dict[int, set[int]]]
     # item -> longest span (tokens, item_tok_start, doc_tok_start)
     spans: dict[int, tuple[int, int, int]]
-    # item -> (exact, exact_normalised)
-    exact: dict[int, tuple[bool, bool]]
+    # item -> (exact, exact_normalised, doc char start, doc char end) for contained items
+    contained: dict[int, tuple[bool, bool, int, int]]
+    # character offsets of the document's tokens (filled only when ``spans`` is not empty)
+    offsets: list[tuple[int, int]]
+
+
+# Containment prefilter: the item's normalised words, minus the first and last (which may
+# be cut mid-word inside a document), give an anchor of up to this many words that must
+# occur as consecutive whole words of the normalised document.
+ANCHOR_WORDS = 8
+_CHUNK_RE = re.compile(r"\S+")
+
+
+def _anchor(words: list[str]) -> list[str]:
+    inner = words[1:-1] if len(words) >= 3 else words
+    return inner[:ANCHOR_WORDS]
+
+
+def _norm_word_spans(text: str) -> list[tuple[int, int]]:
+    """Character range in ``text`` of every word of ``normalise(text)``, in order.
+
+    Each whitespace-free chunk of ``text`` is normalised on its own; a chunk such as
+    ``a.b`` that yields several words gives each of them the range of the whole chunk.
+    """
+    out = []
+    for m in _CHUNK_RE.finditer(text):
+        out.extend((m.start(), m.end()) for _ in normalise(m.group()).split())
+    return out
 
 
 class EvalIndex:
@@ -99,6 +126,13 @@ class EvalIndex:
             if 0 < k < params.gpt3_n:
                 h = ngram_hash([t.text for t in toks])
                 self.short.setdefault(k, {}).setdefault(h, []).append(i)
+        # Exact-containment prefilter over normalised words, independent of the tokenizer:
+        # anchor length -> anchor hash -> items.
+        self.anchors: dict[int, dict[int, list[int]]] = {}
+        for i, nt in enumerate(self.norm_texts):
+            a = _anchor(nt.split())
+            if a:
+                self.anchors.setdefault(len(a), {}).setdefault(ngram_hash(a), []).append(i)
 
     def n_grams(self, i: int, n: int) -> int:
         return max(0, len(self.tokens[i]) - n + 1)
@@ -146,15 +180,41 @@ class EvalIndex:
                 covered = skipgram_cover(runs, budget, self.params.llama_n)
                 if covered:
                     positions.setdefault(i, {})[SKIP_KEY] = covered
-        exact: dict[int, tuple[bool, bool]] = {}
-        if positions:
-            norm_doc = normalise(text)
-            for i in positions:
-                raw = self.items[i].text
-                nt = self.norm_texts[i]
-                exact[i] = (bool(raw) and raw in text, bool(nt) and nt in norm_doc)
-        self._last_doc_tokens = toks
-        return _DocHits(positions, spans, exact)
+        contained = self._containment(text)
+        offsets = [(t.start, t.end) for t in toks] if spans else []
+        return _DocHits(positions, spans, contained, offsets)
+
+    def _containment(self, text: str) -> dict[int, tuple[bool, bool, int, int]]:
+        """Items whose whole text occurs in ``text``, raw or after ``normalise``.
+
+        Every item is checked against every document, whether or not it shares an n-gram
+        with it; the anchor lookup only narrows down which items to compare in full.
+        """
+        norm_doc = normalise(text)
+        words = norm_doc.split()
+        cands: set[int] = set()
+        for k, table in self.anchors.items():
+            for h in ngram_hashes(words, k):
+                cands.update(table.get(h, ()))
+        out: dict[int, tuple[bool, bool, int, int]] = {}
+        spans: list[tuple[int, int]] | None = None
+        for i in sorted(cands):
+            raw, nt = self.items[i].text, self.norm_texts[i]
+            q = text.find(raw) if raw else -1
+            exn = nt in norm_doc
+            if q >= 0:
+                out[i] = (True, exn, q, q + len(raw))
+            elif exn:
+                if spans is None:
+                    spans = _norm_word_spans(text)
+                if len(spans) == len(words):
+                    qn = norm_doc.find(nt)
+                    w0 = norm_doc.count(" ", 0, qn)
+                    w1 = norm_doc.count(" ", 0, qn + len(nt) - 1)
+                    out[i] = (False, True, spans[w0][0], spans[w1][1])
+                else:  # chunk-wise normalisation disagrees: report the whole document
+                    out[i] = (False, True, 0, len(text))
+        return out
 
 
 SKIP_KEY = -2  # positions entry holding token positions covered by skipgram spans
@@ -204,12 +264,10 @@ def _init_worker(index: EvalIndex) -> None:
     _WORKER_INDEX = index
 
 
-def _work(doc: tuple[str, str]) -> tuple[str, _DocHits, list[tuple[int, int]]]:
-    assert _WORKER_INDEX is not None
-    hits = _WORKER_INDEX.scan_doc(doc[1])
-    toks = _WORKER_INDEX._last_doc_tokens
-    offsets = [(t.start, t.end) for t in toks] if hits.spans else []
-    return doc[0], hits, offsets
+def _work(doc: tuple[str, str]) -> tuple[str, _DocHits]:
+    if _WORKER_INDEX is None:
+        raise RuntimeError("worker index not initialised")
+    return doc[0], _WORKER_INDEX.scan_doc(doc[1])
 
 
 def scan(
@@ -235,7 +293,7 @@ def scan(
     doc_freq: Counter[tuple[int, int]] = Counter()
     count_freq = params.max_doc_freq is not None
 
-    def results() -> Iterator[tuple[str, _DocHits, list[tuple[int, int]]]]:
+    def results() -> Iterator[tuple[str, _DocHits]]:
         if workers <= 1:
             _init_worker(index)
             for doc in corpus:
@@ -244,11 +302,11 @@ def scan(
             with mp.get_context().Pool(workers, _init_worker, (index,)) as pool:
                 yield from pool.imap(_work, corpus, chunksize=64)
 
-    for doc_id, hits, offsets in results():
+    for doc_id, hits in results():
         seen: set[tuple[int, int]] = set()
-        for i, by_n in hits.positions.items():
+        for i in hits.positions.keys() | hits.contained.keys():
             doc_count[i] += 1
-            for n, ps in by_n.items():
+            for n, ps in hits.positions.get(i, {}).items():
                 if n == -1:
                     short_hit[i] = True
                 elif n == SKIP_KEY:
@@ -258,26 +316,29 @@ def scan(
                     if count_freq:
                         hs = index.item_hashes[n][i]
                         seen.update((n, hs[p]) for p in ps)
-            span = hits.spans.get(i)
-            ex, exn = hits.exact.get(i, (False, False))
-            if span is None or span[0] == 0:
-                continue
-            length, p, j = span
             itoks = index.tokens[i]
-            m = Match(
-                doc_id=doc_id,
-                tokens=length,
-                item_start=itoks[p].start,
-                item_end=itoks[min(p + length, len(itoks)) - 1].end,
-                doc_start=offsets[j][0],
-                doc_end=offsets[min(j + length, len(offsets)) - 1][1],
-                exact=ex,
-                exact_normalised=exn,
-            )
+            c = hits.contained.get(i)
+            if c is not None:  # the whole item: all its tokens are shared
+                ex, exn, d0, d1 = c
+                m = Match(doc_id, len(itoks), 0, len(items[i].text), d0, d1, ex, exn)
+            else:
+                span = hits.spans.get(i)
+                if span is None or span[0] == 0:
+                    continue
+                length, p, j = span
+                offsets = hits.offsets
+                m = Match(
+                    doc_id=doc_id,
+                    tokens=length,
+                    item_start=itoks[p].start,
+                    item_end=itoks[min(p + length, len(itoks)) - 1].end,
+                    doc_start=offsets[j][0],
+                    doc_end=offsets[min(j + length, len(offsets)) - 1][1],
+                )
             m.snippet = items[i].text[m.item_start : m.item_end][:snippet_chars]
             lst = best[i]
             lst.append(m)
-            lst.sort(key=lambda x: (-x.exact, -x.tokens))
+            lst.sort(key=lambda x: (-(x.exact or x.exact_normalised), -x.tokens))
             del lst[max_matches:]
         doc_freq.update(seen)
 

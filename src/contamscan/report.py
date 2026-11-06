@@ -155,7 +155,11 @@ def to_markdown(
         lines.append(
             f"| {m} | {rules[m]} | {v['contaminated']} | {_pct(v['fraction'])} | {labels} |"
         )
-    lines += ["", f"Items with any shared n-gram: {s['any_overlap']}.", ""]
+    lines += [
+        "",
+        f"Items with any shared n-gram or whole-item containment: {s['any_overlap']}.",
+        "",
+    ]
     ls = s["llama2_subsets"]
     lines += [
         f"Llama 2 subsets: clean {ls['clean']}, not clean {ls['not clean']}, "
