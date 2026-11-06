@@ -49,6 +49,16 @@ METHODS = ("gpt3", "palm", "llama2", "substring")
 
 @dataclass(frozen=True)
 class Params:
+    """Thresholds and n-gram sizes of the four methods; defaults from the cited papers.
+
+    ``gpt3_n``: GPT-3 N. ``palm_n``, ``palm_threshold``: PaLM n and matched share.
+    ``llama_n``: Llama 2 minimum match length; ``llama_clean``, ``llama_dirty``: its
+    coverage bands. ``substring_min_tokens``: run length for ``long-match``.
+    ``max_doc_freq``: ignore item n-grams in more documents than this (``None``: off).
+    ``palm_per_field``: PaLM share per text field. ``llama_skip_budget``: mismatches
+    allowed inside a Llama 2 span (0: exact).
+    """
+
     gpt3_n: int = 13
     palm_n: int = 8
     palm_threshold: float = 0.70
@@ -61,6 +71,7 @@ class Params:
     llama_skip_budget: int = 0
 
     def ns(self) -> tuple[int, ...]:
+        """The distinct n-gram sizes the methods need, ascending."""
         return tuple(sorted({self.gpt3_n, self.palm_n, self.llama_n}))
 
     def span_n(self) -> int:
@@ -83,10 +94,12 @@ def gpt3_auto_n(lengths: list[int], low: int = 8, high: int = 13) -> int:
 
 
 def label_gpt3(matched_grams: int) -> str:
+    """``dirty`` if any N-gram is shared, else ``clean``."""
     return "dirty" if matched_grams > 0 else "clean"
 
 
 def label_palm(fraction: float | None, threshold: float) -> str:
+    """``contaminated`` at or above ``threshold``; ``too-short`` with no n-gram at all."""
     if fraction is None:
         return "too-short"
     return "contaminated" if fraction >= threshold else "clean"
@@ -106,6 +119,7 @@ def label_llama2(coverage: float, clean: float, dirty: float) -> str:
 
 
 def label_substring(longest_tokens: int, exact: bool, min_tokens: int) -> str:
+    """``exact`` for a contained item, ``long-match`` for a run of ``min_tokens`` or more."""
     if exact:
         return "exact"
     return "long-match" if longest_tokens >= min_tokens else "clean"

@@ -46,10 +46,12 @@ LLAMA2_SUBSETS = {
 
 
 def is_contaminated(r: ItemResult, method: str) -> bool:
+    """Whether ``r`` carries a contaminated label under ``method``."""
     return getattr(r, _LABEL_ATTR[method]) in CONTAMINATED[method]
 
 
 def summarise(results: list[ItemResult]) -> dict[str, Any]:
+    """Label counts and contaminated fraction per method, and the Llama 2 subset sizes."""
     n = len(results)
     out: dict[str, Any] = {"items": n, "methods": {}}
     for m, attr in _LABEL_ATTR.items():
@@ -81,24 +83,25 @@ def comparisons(
     * ``gpt3_clean_vs_full``: the GPT-3 relative change of the clean-only score against the
       score on all items.
     """
-    if not results or any(r.score is None for r in results):
+    scored = [(r, r.score) for r in results if r.score is not None]
+    if not results or len(scored) < len(results):
         return {}
-    scores = [float(r.score) for r in results]  # type: ignore[arg-type]
+    scores = [x for _, x in scored]
     diffs: dict[str, Any] = {}
     for m in _LABEL_ATTR:
-        dirty = [r.score for r in results if is_contaminated(r, m)]
-        clean = [r.score for r in results if not is_contaminated(r, m)]
+        dirty = [x for r, x in scored if is_contaminated(r, m)]
+        clean = [x for r, x in scored if not is_contaminated(r, m)]
         c = compare(clean, dirty, n_boot=n_boot, seed=seed)
         diffs[m] = asdict(c) if c else None
-    clean = [r.score for r in results if r.llama2_label == "clean"]
-    rest = [r.score for r in results if r.llama2_label != "clean"]
+    clean = [x for r, x in scored if r.llama2_label == "clean"]
+    rest = [x for r, x in scored if r.llama2_label != "clean"]
     c = compare(clean, rest, n_boot=n_boot, seed=seed)
     diffs["llama2_not_clean_vs_clean"] = asdict(c) if c else None
     subsets = []
     for name, labels in LLAMA2_SUBSETS.items():
         z = subset_z(scores, [r.llama2_label in labels for r in results], name, fpc=z_fpc)
         subsets.append(asdict(z) if z else {"subset": name, "n": 0})
-    gpt3_clean = [r.score for r in results if not is_contaminated(r, "gpt3")]
+    gpt3_clean = [x for r, x in scored if not is_contaminated(r, "gpt3")]
     full_mean = sum(scores) / len(scores)
     gpt3 = {
         "n_clean": len(gpt3_clean),
@@ -113,6 +116,7 @@ def comparisons(
 def to_json(
     results: list[ItemResult], params: Params, meta: dict[str, Any], comp: dict[str, Any]
 ) -> str:
+    """JSON report: parameters, run metadata, summary, score comparison and every item."""
     doc = {
         "params": asdict(params),
         "meta": meta,
@@ -135,6 +139,8 @@ def to_markdown(
     *,
     examples: int = 10,
 ) -> str:
+    """Markdown report: summary tables, score comparison and the ``examples`` items with the
+    most overlap and their matched documents."""
     s = summarise(results)
     lines = [
         "# Contamination report",

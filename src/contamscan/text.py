@@ -59,6 +59,8 @@ TOKENIZERS = ("word", "code")
 
 @dataclass(frozen=True)
 class Token:
+    """One token: its normalised ``text`` and the ``start:end`` range it came from."""
+
     text: str
     start: int
     end: int

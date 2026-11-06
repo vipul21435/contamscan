@@ -22,5 +22,7 @@ jobs:
         run: |
           uv run ruff check .
           uv run ruff format --check .
+      - name: Types
+        run: uv run mypy src/contamscan
       - name: Test
         run: uv run pytest -q --cov=contamscan --cov-report=term

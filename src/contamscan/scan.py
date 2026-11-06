@@ -23,6 +23,8 @@ __all__ = ["EvalItem", "Match", "ItemResult", "EvalIndex", "scan"]
 
 @dataclass(frozen=True)
 class EvalItem:
+    """One evaluation item: its id, the text to check and an optional model score."""
+
     id: str
     text: str
     score: float | None = None
@@ -47,6 +49,16 @@ class Match:
 
 @dataclass
 class ItemResult:
+    """Per-item result of a scan.
+
+    Overlaps are fractions in [0, 1]: matched GPT-3 N-grams, matched PaLM n-grams
+    (``None`` when the item has fewer than n tokens) and Llama 2 token coverage. Each has
+    its label. ``longest_match_tokens`` is the longest run shared with one document,
+    ``n_matching_docs`` the number of documents with any reported overlap, ``matches`` the
+    kept documents (containment first, then longest) and ``palm_fields`` the per-field
+    PaLM fractions with ``palm_per_field``.
+    """
+
     id: str
     n_tokens: int
     score: float | None
@@ -96,13 +108,15 @@ def _norm_word_spans(text: str) -> list[tuple[int, int]]:
     Each whitespace-free chunk of ``text`` is normalised on its own; a chunk such as
     ``a.b`` that yields several words gives each of them the range of the whole chunk.
     """
-    out = []
+    out: list[tuple[int, int]] = []
     for m in _CHUNK_RE.finditer(text):
         out.extend((m.start(), m.end()) for _ in normalise(m.group()).split())
     return out
 
 
 class EvalIndex:
+    """Hashed n-gram index of an evaluation set, matched against one document at a time."""
+
     def __init__(self, items: list[EvalItem], params: Params, tokenizer: str = "word"):
         self.items = items
         self.params = params
@@ -138,6 +152,7 @@ class EvalIndex:
                 self.anchors.setdefault(len(a), {}).setdefault(ngram_hash(a), []).append(i)
 
     def n_grams(self, i: int, n: int) -> int:
+        """Number of n-grams of item ``i``."""
         return max(0, len(self.tokens[i]) - n + 1)
 
     def scan_doc(self, text: str) -> _DocHits:
@@ -185,9 +200,9 @@ class EvalIndex:
                         if budget > 0:
                             runs.setdefault(i, []).append((r + span_n - 1, p0, j0))
                 prev = cur
-        for k, table in self.short.items():
+        for k, short_table in self.short.items():
             for j, h in enumerate(ngram_hashes(words, k)):
-                for i in table.get(h, ()):
+                for i in short_table.get(h, ()):
                     positions.setdefault(i, {}).setdefault(-1, set()).add(0)
                     offer(i, (len(self.tokens[i]), -j, 0))  # the whole short item
         spans = {i: (b[0], -b[2], -b[1]) for i, b in best.items()}
@@ -269,7 +284,7 @@ def skipgram_spans(
     for length, p, j in runs:
         by_diag.setdefault(j - p, []).append((p, p + length))
     head = n - 1
-    out = []
+    out: list[tuple[int, int, tuple[tuple[int, int], ...]]] = []
     for segs in by_diag.values():
         segs.sort()
         members = [segs[0]]
@@ -373,15 +388,15 @@ def scan(
             lst.append(m)
             lst.sort(key=lambda x: (-(x.exact or x.exact_normalised), -x.tokens))
             del lst[max_matches:]
-        for i, found in hits.skip.items():
+        for i, doc_spans in hits.skip.items():
             if count_freq:
-                skip_spans[i].update(found)
+                skip_spans[i].update(doc_spans)
             else:
-                for a, b, _ in found:
+                for a, b, _ in doc_spans:
                     skip_cov[i].update(range(a, b))
         doc_freq.update(seen)
 
-    if count_freq:
+    if params.max_doc_freq is not None:
         k_max = params.max_doc_freq
         for n, per_item in matched.items():
             hs_n = index.item_hashes[n]

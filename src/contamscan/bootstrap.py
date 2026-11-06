@@ -24,6 +24,9 @@ __all__ = ["Comparison", "compare", "SubsetZ", "subset_z", "relative_change"]
 
 @dataclass(frozen=True)
 class Comparison:
+    """Difference ``mean_contaminated - mean_clean`` with its ``low``, ``high`` bootstrap
+    interval at level ``confidence`` from ``n_boot`` resamples."""
+
     n_clean: int
     n_contaminated: int
     mean_clean: float
@@ -89,6 +92,9 @@ def _resampled_means(
 
 @dataclass(frozen=True)
 class SubsetZ:
+    """Llama 2 statistic of one subset: size ``n``, its ``mean``, ``mu`` and ``sigma`` of
+    the sampling distribution, and ``z`` (``None`` when ``sigma`` is zero)."""
+
     subset: str
     n: int
     mean: float

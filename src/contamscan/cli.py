@@ -68,6 +68,7 @@ DESCRIPTION = (
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """The ``contamscan`` argument parser."""
     p = argparse.ArgumentParser(prog="contamscan", description=DESCRIPTION)
     p.add_argument("--version", action="version", version=f"contamscan {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
@@ -227,6 +228,7 @@ def _warn(msg: str) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the command line; returns the exit status (0 pass, 1 ``--fail-above``, 2 error)."""
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.llama_clean > args.llama_dirty:
