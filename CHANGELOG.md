@@ -10,7 +10,12 @@
 - Methods: GPT-3 any-13-gram, PaLM 70 % of 8-grams, Llama 2 token coverage (clean, mixed,
   dirty) and longest shared span / exact containment; matched documents with character
   offsets.
-- Bootstrap interval for the difference between scores on contaminated and clean items.
+- Paper variants as flags: `--gpt3-n auto` (5th-percentile length clamped to [8, 13]),
+  `--palm-per-field`, `--max-doc-freq` (ignore n-grams common across the corpus) and
+  `--llama-skip-budget` (an approximation of the Llama 2 skipgram budget).
+- Score comparison: bootstrap interval for the difference between contaminated and clean
+  items, the Llama 2 Z statistic for its four subsets, and the GPT-3 relative change of the
+  clean-only score.
 - `contamscan scan` with JSON and Markdown reports and `--fail-above` for CI.
-- Examples: fetch and convert HumanEval, MBPP and CodeAlpaca-20k; seeded synthetic score
-  comparison.
+- Examples: fetch and convert HumanEval, MBPP, CodeAlpaca-20k and self-oss-instruct; run and
+  summarise the code audit; plot token coverage; seeded synthetic score comparison.
