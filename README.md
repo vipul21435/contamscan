@@ -106,8 +106,9 @@ the evaluation set's n-gram hashes go into a dict `hash -> [(item, position)]`. 
 is streamed once (`--workers K` spreads documents over K processes); each document's
 n-gram hashes are looked up and the hit positions are accumulated per item. Memory grows
 with the evaluation set, not the corpus. With 64-bit hashes the chance of a false match
-between two given n-grams is about 2^-64. A property test checks the index against a
-brute-force scan of random text with a four- to six-word vocabulary.
+between two given n-grams is about 2^-64. Property tests check the index, the
+document-frequency filter and the skipgram budget against direct scans of random text
+drawn from small vocabularies.
 
 **Methods.** For an item with k tokens and g_n = k - n + 1 n-grams:
 
