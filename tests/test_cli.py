@@ -205,3 +205,13 @@ def test_partial_scores_are_reported(tmp_path, capsys):
     assert main(args + ["--json", str(out)]) == 0
     assert "1 of 6 items have no 'pass'" in capsys.readouterr().err
     assert json.loads(out.read_text())["comparison"] == {}
+
+
+def test_every_flag_has_help():
+    from contamscan.cli import build_parser
+
+    parser = build_parser()
+    assert "``" not in parser.description
+    scan_parser = parser._subparsers._group_actions[0].choices["scan"]
+    for action in scan_parser._actions:
+        assert action.help, action.dest

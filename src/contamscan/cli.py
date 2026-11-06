@@ -61,40 +61,103 @@ def _fraction(s: str) -> float:
     return x
 
 
+DESCRIPTION = (
+    "Measure how much of an evaluation set appears in a training corpus. "
+    "Run 'contamscan scan EVAL CORPUS... [options]'."
+)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="contamscan", description=__doc__)
+    p = argparse.ArgumentParser(prog="contamscan", description=DESCRIPTION)
     p.add_argument("--version", action="version", version=f"contamscan {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
-    s = sub.add_parser("scan", help="scan a corpus for evaluation-set overlap")
+    s = sub.add_parser(
+        "scan",
+        help="scan a corpus for evaluation-set overlap",
+        description="Scan a corpus for overlap with an evaluation set under the GPT-3, PaLM, "
+        "Llama 2 and substring rules.",
+    )
     s.add_argument("eval", type=Path, help="evaluation set (.jsonl or .parquet)")
     s.add_argument("corpus", type=Path, nargs="+", help="corpus files or directories")
     g = s.add_argument_group("evaluation set")
-    g.add_argument("--fields", type=_csv, default=["text"], help="text fields to check")
-    g.add_argument("--id-field", default="id")
-    g.add_argument("--score-field", default=None, help="per-item model score (e.g. pass@1)")
+    g.add_argument(
+        "--fields",
+        type=_csv,
+        default=["text"],
+        help="comma-separated text fields to check, joined by newlines (default: text)",
+    )
+    g.add_argument("--id-field", default="id", help="item id field (default: id; else row number)")
+    g.add_argument(
+        "--score-field", default=None, help="per-item model score, e.g. pass@1 (default: none)"
+    )
     g = s.add_argument_group("corpus")
-    g.add_argument("--corpus-fields", type=_csv, default=["text"])
-    g.add_argument("--corpus-id-field", default="id")
+    g.add_argument(
+        "--corpus-fields",
+        type=_csv,
+        default=["text"],
+        help="comma-separated JSONL/Parquet text fields, joined by newlines (default: text)",
+    )
+    g.add_argument(
+        "--corpus-id-field",
+        default="id",
+        help="document id field (default: id; else FILE:ROW)",
+    )
     g = s.add_argument_group("methods (defaults from the cited papers; see README)")
-    g.add_argument("--tokenizer", choices=TOKENIZERS, default="word")
+    g.add_argument(
+        "--tokenizer",
+        choices=TOKENIZERS,
+        default="word",
+        help="word: case-folded words, the GPT-3 rule; code: identifiers, numbers and "
+        "operators, case kept (default: word)",
+    )
     g.add_argument(
         "--gpt3-n",
         type=_n_or_auto,
         default=13,
-        help="GPT-3 N (default 13); 'auto' = 5th-percentile item length clamped to [8, 13]",
+        help="GPT-3 N (default 13, Brown et al. 2020 App. C); 'auto' = 5th-percentile item "
+        "length clamped to [8, 13]",
     )
-    g.add_argument("--palm-n", type=_positive, default=8, help="PaLM n (default 8)")
-    g.add_argument("--palm-threshold", type=_fraction, default=0.70, help="PaLM (default 0.70)")
-    g.add_argument("--llama-n", type=_positive, default=11, help="Llama 2: n-grams longer than 10")
-    g.add_argument("--llama-clean", type=_fraction, default=0.20)
-    g.add_argument("--llama-dirty", type=_fraction, default=0.80)
+    g.add_argument(
+        "--palm-n", type=_positive, default=8, help="PaLM n (default 8, Chowdhery et al. 2022)"
+    )
+    g.add_argument(
+        "--palm-threshold",
+        type=_fraction,
+        default=0.70,
+        help="PaLM share of matched n-grams (default 0.70, Chowdhery et al. 2022)",
+    )
+    g.add_argument(
+        "--llama-n",
+        type=_positive,
+        default=11,
+        help="Llama 2 minimum match length in tokens (default 11: 'longer than 10', "
+        "Touvron et al. 2023 App. A.6)",
+    )
+    g.add_argument(
+        "--llama-clean",
+        type=_fraction,
+        default=0.20,
+        help="Llama 2 clean below this token coverage (default 0.20, Touvron et al. 2023)",
+    )
+    g.add_argument(
+        "--llama-dirty",
+        type=_fraction,
+        default=0.80,
+        help="Llama 2 dirty at or above this token coverage (default 0.80, Touvron et al. 2023)",
+    )
     g.add_argument(
         "--llama-skip-budget",
         type=_non_negative,
         default=0,
-        help="mismatched positions allowed inside a Llama 2 span (0 = exact; the paper used 4)",
+        help="mismatched positions allowed inside a Llama 2 span (default 0 = exact; the "
+        "paper used 4; approximate)",
     )
-    g.add_argument("--substring-min-tokens", type=_positive, default=50)
+    g.add_argument(
+        "--substring-min-tokens",
+        type=_positive,
+        default=50,
+        help="shared run that counts as long-match (default 50, this tool's choice)",
+    )
     g.add_argument(
         "--palm-per-field",
         action="store_true",
@@ -107,20 +170,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="ignore item n-grams found in more than this many documents (off; GPT-3 used 10)",
     )
     g = s.add_argument_group("output")
-    g.add_argument("--max-matches", type=_positive, default=5, help="matches kept per item")
-    g.add_argument("--workers", type=_positive, default=1, help="processes for the corpus scan")
+    g.add_argument(
+        "--max-matches", type=_positive, default=5, help="matched documents kept per item (5)"
+    )
+    g.add_argument("--workers", type=_positive, default=1, help="processes for the corpus scan (1)")
     g.add_argument("--json", type=Path, default=None, help="write the JSON report here")
     g.add_argument("--markdown", type=Path, default=None, help="write the Markdown report here")
-    g.add_argument("--examples", type=_non_negative, default=10, help="items shown in Markdown")
-    g.add_argument("--n-boot", type=_positive, default=10_000)
-    g.add_argument("--seed", type=int, default=0)
+    g.add_argument(
+        "--examples", type=_non_negative, default=10, help="items shown in Markdown (10)"
+    )
+    g.add_argument(
+        "--n-boot",
+        type=_positive,
+        default=10_000,
+        help="bootstrap resamples for the score difference intervals (10000)",
+    )
+    g.add_argument("--seed", type=int, default=0, help="bootstrap random seed (0)")
     g.add_argument(
         "--fail-above",
         type=_fraction,
         default=None,
-        help="exit 1 if the contaminated fraction under --fail-method exceeds this",
+        help="exit 1 if the contaminated fraction under --fail-method exceeds this (off)",
     )
-    g.add_argument("--fail-method", choices=METHODS, default="palm")
+    g.add_argument(
+        "--fail-method",
+        choices=METHODS,
+        default="palm",
+        help="method checked by --fail-above (default: palm)",
+    )
     return p
 
 
