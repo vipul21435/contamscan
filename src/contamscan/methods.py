@@ -19,6 +19,10 @@ Defaults and their sources:
   choice of this tool, not from a paper); plus exact containment of the whole item text
   in a document, raw and normalised.
 
+``palm_per_field`` (off by default): PaLM checks "question, prompt, or target" separately;
+with this flag the ``palm`` fraction is taken over the n-grams inside each text field and
+the item counts as contaminated when any field reaches the threshold.
+
 ``max_doc_freq`` (off by default): item n-grams found in more than this many corpus
 documents are ignored by ``gpt3``, ``palm`` and ``llama2``. GPT-3 (Appendix C) ignored
 13-grams that matched more than 10 training documents in its training-set filter, finding
@@ -52,6 +56,7 @@ class Params:
     llama_dirty: float = 0.80
     substring_min_tokens: int = 50
     max_doc_freq: int | None = None
+    palm_per_field: bool = False
 
     def ns(self) -> tuple[int, ...]:
         return tuple(sorted({self.gpt3_n, self.palm_n, self.llama_n}))

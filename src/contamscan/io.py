@@ -58,6 +58,26 @@ def _join(rec: dict[str, Any], fields: Sequence[str]) -> str:
     return "\n".join(parts)
 
 
+def _join_with_spans(
+    rec: dict[str, Any], fields: Sequence[str]
+) -> tuple[str, tuple[tuple[str, int, int], ...]]:
+    """Like ``_join``, also returning each present field's character range in the text."""
+    parts: list[str] = []
+    spans = []
+    pos = 0
+    for f in fields:
+        v = rec.get(f)
+        if v is None:
+            continue
+        s = v if isinstance(v, str) else json.dumps(v)
+        if parts:
+            pos += 1  # the joining newline
+        spans.append((f, pos, pos + len(s)))
+        parts.append(s)
+        pos += len(s)
+    return "\n".join(parts), tuple(spans)
+
+
 def iter_corpus(
     paths: Sequence[str | Path],
     text_fields: Sequence[str] = ("text",),
@@ -100,5 +120,8 @@ def load_eval(
         score = rec.get(score_field) if score_field else None
         if isinstance(score, bool):
             score = float(score)
-        items.append(EvalItem(item_id, _join(rec, fields), None if score is None else float(score)))
+        text, spans = _join_with_spans(rec, fields)
+        items.append(
+            EvalItem(item_id, text, None if score is None else float(score), field_spans=spans)
+        )
     return items

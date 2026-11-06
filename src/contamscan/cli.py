@@ -61,6 +61,11 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--llama-dirty", type=float, default=0.80)
     g.add_argument("--substring-min-tokens", type=int, default=50)
     g.add_argument(
+        "--palm-per-field",
+        action="store_true",
+        help="PaLM fraction per text field; contaminated if any field reaches the threshold",
+    )
+    g.add_argument(
         "--max-doc-freq",
         type=int,
         default=None,
@@ -105,6 +110,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         llama_dirty=args.llama_dirty,
         substring_min_tokens=args.substring_min_tokens,
         max_doc_freq=args.max_doc_freq,
+        palm_per_field=args.palm_per_field,
     )
     count = [0]
     docs = _counting(iter_corpus(args.corpus, args.corpus_fields, args.corpus_id_field), count)

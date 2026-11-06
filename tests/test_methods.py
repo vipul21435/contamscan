@@ -112,3 +112,25 @@ def test_max_doc_freq_ignores_common_ngrams():
     assert r.gpt3_overlap == 0.0 and r.gpt3_label == "clean"
     # the longest-span report is not filtered
     assert r.longest_match_tokens == 13
+
+
+def test_palm_per_field():
+    question = text(0, 20)  # 13 eight-grams
+    target = text(100, 140)  # 33 eight-grams
+    it = EvalItem(
+        "q",
+        question + "\n" + target,
+        field_spans=(
+            ("q", 0, len(question)),
+            ("t", len(question) + 1, len(question) + 1 + len(target)),
+        ),
+    )
+    corpus = [("d", "zz " + question + " zz")]
+    joined = scan([it], corpus, Params())[0]
+    assert joined.palm_label == "clean" and joined.palm_fields is None
+    per = scan([it], corpus, Params(palm_per_field=True))[0]
+    assert per.palm_fields == {"q": 1.0, "t": 0.0}
+    assert per.palm_overlap == 1.0 and per.palm_label == "contaminated"
+    short = EvalItem("s", "a b", field_spans=(("q", 0, 3),))
+    r = scan([short], corpus, Params(palm_per_field=True))[0]
+    assert r.palm_fields == {"q": None} and r.palm_label == "too-short"

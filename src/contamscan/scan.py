@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 from .hashing import ngram_hash, ngram_hashes
 from .methods import Params, label_gpt3, label_llama2, label_palm, label_substring
-from .text import normalise, tokenize
+from .text import Token, normalise, tokenize
 
 __all__ = ["EvalItem", "Match", "ItemResult", "EvalIndex", "scan"]
 
@@ -25,6 +25,8 @@ class EvalItem:
     id: str
     text: str
     score: float | None = None
+    # (field name, start, end) character ranges of the fields joined into ``text``
+    field_spans: tuple[tuple[str, int, int], ...] = ()
 
 
 @dataclass
@@ -57,6 +59,7 @@ class ItemResult:
     substring_label: str
     n_matching_docs: int
     matches: list[Match] = field(default_factory=list)
+    palm_fields: dict[str, float | None] | None = None
 
 
 @dataclass
@@ -249,6 +252,13 @@ def scan(
             g_frac = g_hit / g_total
         p_total = index.n_grams(i, params.palm_n)
         p_frac = len(matched[params.palm_n][i]) / p_total if p_total else None
+        p_fields = None
+        if params.palm_per_field and it.field_spans:
+            p_fields = _field_fractions(
+                index.tokens[i], it.field_spans, matched[params.palm_n][i], params.palm_n
+            )
+            present = [v for v in p_fields.values() if v is not None]
+            p_frac = max(present) if present else None
         covered: set[int] = set()
         for p in matched[params.llama_n][i]:
             covered.update(range(p, p + params.llama_n))
@@ -270,6 +280,23 @@ def scan(
                 substring_label=label_substring(longest, exact, params.substring_min_tokens),
                 n_matching_docs=doc_count[i],
                 matches=best[i],
+                palm_fields=p_fields,
             )
         )
+    return out
+
+
+def _field_fractions(
+    toks: list[Token], spans: tuple[tuple[str, int, int], ...], hit: set[int], n: int
+) -> dict[str, float | None]:
+    """Fraction of matched n-grams among the n-grams lying wholly inside each field."""
+    out: dict[str, float | None] = {}
+    for name, start, end in spans:
+        idx = [k for k, t in enumerate(toks) if start <= t.start and t.end <= end]
+        if len(idx) < n:
+            out[name] = None
+            continue
+        a, b = idx[0], idx[-1] + 1  # fields are contiguous token ranges
+        total = b - a - n + 1
+        out[name] = sum(1 for p in range(a, b - n + 1) if p in hit) / total
     return out

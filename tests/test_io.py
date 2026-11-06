@@ -47,3 +47,13 @@ def test_corpus_jsonl_text_dir_and_parquet(tmp_path):
         ("c.parquet:0", "pq row"),
     ]
     assert list(iter_corpus([d / "b.txt"])) == [("b.txt", "plain file")]
+
+
+def test_load_eval_field_spans(tmp_path):
+    p = tmp_path / "e.jsonl"
+    write_jsonl(p, [{"id": "a", "q": "hello", "s": "world", "n": 3}, {"id": "b", "s": "x"}])
+    a, b = load_eval(p, ["q", "s", "n"])
+    assert a.text == "hello\nworld\n3"
+    for name, start, end in a.field_spans:
+        assert a.text[start:end] == {"q": "hello", "s": "world", "n": "3"}[name]
+    assert b.field_spans == (("s", 0, 1),)
