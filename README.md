@@ -452,6 +452,9 @@ was considered and not used because its card states no licence.
   benchmark-task bundles.
 - [graderguard](https://github.com/vipul21435/graderguard): audit graders for reward hacking
   and flakiness.
+- [awesome-coding-agent-evals](https://github.com/vipul21435/awesome-coding-agent-evals): a
+  curated list of benchmarks, harnesses, datasets and papers for coding agents, each checked
+  at its source.
 
 ## Licence
 
