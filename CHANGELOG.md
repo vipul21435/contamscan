@@ -58,3 +58,5 @@
 - Fix: bootstrap resamples are drawn in blocks of about a million values, so memory no
   longer grows with `--n-boot` times the group size; results for a given seed are
   unchanged.
+- Package exports (`EvalItem`, `Params`, `load_eval`, `iter_corpus`, `summarise`, ...),
+  docstrings on the public objects, and a mypy check in CI.
