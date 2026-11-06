@@ -41,3 +41,15 @@
   fullwidth copies of an item are found by the n-gram methods (before, only the
   containment check normalised); Han, hiragana and katakana characters are now one token
   each, so Chinese and Japanese items are no longer one token per clause.
+- Fix: malformed corpus input (truncated or non-UTF-8 JSONL lines, non-object records,
+  unreadable files) gives a one-line `contamscan: error: FILE:LINE: ...` and exit status
+  2, distinct from the status 1 of `--fail-above`; report directories and the evaluation
+  path are checked before the scan; an empty evaluation set and non-finite or non-numeric
+  scores are errors.
+- Fix: `.jsonl.gz` corpora are read, suffixes are compared case-insensitively, and a file
+  of any other type named directly is an error unless `--text-files` is given (before, a
+  compressed shard was read as one text document and passed the gate); skipped files in
+  corpus directories are counted in a warning.
+- Document ids of records without an id and of text files are relative to the corpus
+  argument (`train/part-0.jsonl:17`, `repo_a/README.md`); Parquet corpora read only the
+  text and id columns.

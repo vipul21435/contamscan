@@ -1,13 +1,16 @@
 """Streaming readers for evaluation sets and corpora.
 
-Corpora are read one record at a time: JSONL line by line, Parquet one row group batch
-at a time (needs the optional ``pyarrow`` dependency), and plain-text files one file per
-document. Nothing is loaded whole.
+Corpora are read one record at a time: JSONL (plain or gzip-compressed) line by line,
+Parquet one batch at a time with only the needed columns (needs the optional ``pyarrow``
+dependency), and plain-text files one file per document. Nothing is loaded whole.
+Suffixes are compared case-insensitively.
 """
 
 from __future__ import annotations
 
+import gzip
 import json
+import math
 from collections import Counter
 from collections.abc import Iterator, Sequence
 from pathlib import Path
@@ -18,26 +21,54 @@ from .scan import EvalItem
 __all__ = ["iter_records", "iter_corpus", "load_eval"]
 
 TEXT_SUFFIXES = {".txt", ".md", ".py", ".rst"}
+RECORD_SUFFIXES = (".jsonl", ".jsonl.gz", ".parquet")
 
 
-def _iter_parquet(path: Path, batch_size: int = 1024) -> Iterator[dict[str, Any]]:
+def record_kind(path: Path) -> str | None:
+    """``".jsonl"``, ``".jsonl.gz"`` or ``".parquet"`` for record files, else ``None``."""
+    name = path.name.lower()
+    return next((x for x in RECORD_SUFFIXES if name.endswith(x)), None)
+
+
+def _iter_parquet(
+    path: Path, columns: Sequence[str] | None = None, batch_size: int = 1024
+) -> Iterator[dict[str, Any]]:
     try:
         import pyarrow.parquet as pq
     except ImportError as e:  # pragma: no cover - depends on the environment
         raise SystemExit("reading Parquet needs pyarrow: pip install 'contamscan[parquet]'") from e
     pf = pq.ParquetFile(path)
-    for batch in pf.iter_batches(batch_size=batch_size):
-        yield from batch.to_pylist()
+    cols = None
+    if columns is not None:
+        names = set(pf.schema_arrow.names)
+        cols = [c for c in dict.fromkeys(columns) if c in names]
+    for batch in pf.iter_batches(batch_size=batch_size, columns=cols):
+        if cols == []:  # none of the fields exist: keep the row count
+            yield from ({} for _ in range(batch.num_rows))
+        else:
+            yield from batch.to_pylist()
 
 
-def iter_records(path: str | Path) -> Iterator[dict[str, Any]]:
-    """Yield dict records from a ``.jsonl`` or ``.parquet`` file."""
+def iter_records(
+    path: str | Path, columns: Sequence[str] | None = None
+) -> Iterator[dict[str, Any]]:
+    """Yield dict records from a ``.jsonl``, ``.jsonl.gz`` or ``.parquet`` file.
+
+    ``columns`` limits the Parquet columns read (JSONL lines are parsed whole). Malformed
+    input raises ``ValueError`` naming the file and line.
+    """
     path = Path(path)
-    if path.suffix == ".parquet":
-        yield from _iter_parquet(path)
+    kind = record_kind(path)
+    if kind == ".parquet":
+        yield from _iter_parquet(path, columns)
         return
-    with path.open(encoding="utf-8") as fh:
-        for lineno, line in enumerate(fh, 1):
+    opener = gzip.open if kind == ".jsonl.gz" else open
+    with opener(path, "rb") as fh:
+        for lineno, raw in enumerate(fh, 1):
+            try:
+                line = raw.decode("utf-8")
+            except UnicodeDecodeError as e:
+                raise ValueError(f"{path}:{lineno}: not valid UTF-8: {e.reason}") from e
             if not line.strip():
                 continue
             try:
@@ -84,30 +115,64 @@ def iter_corpus(
     text_fields: Sequence[str] = ("text",),
     id_field: str = "id",
     field_counts: Counter[str] | None = None,
+    *,
+    text_files: bool = False,
+    skipped: Counter[str] | None = None,
 ) -> Iterator[tuple[str, str]]:
     """Yield ``(doc_id, text)`` for every document in ``paths``.
 
-    Directories are walked for ``.jsonl``, ``.parquet`` and plain-text files. A record
-    without ``id_field`` gets the id ``<file name>:<record number>``. If ``field_counts``
-    is given, it counts the JSONL and Parquet records (key ``""``) and, for each of
-    ``text_fields``, the records that have it.
+    Directories are walked for ``.jsonl``, ``.jsonl.gz``, ``.parquet`` and plain-text files
+    (``.txt``, ``.md``, ``.py``, ``.rst``); other files are skipped and, if ``skipped`` is
+    given, counted by suffix. A file named directly must be one of those types, or any
+    file when ``text_files`` is true (read whole as one document); otherwise ``ValueError``.
+    Ids are relative to the path argument: a record without ``id_field`` gets
+    ``<relative path>:<record number>``, a text file its relative path. If ``field_counts``
+    is given, it counts the records (key ``""``) and, for each of ``text_fields``, the
+    records that have it.
     """
+    columns = [*text_fields, id_field]
     for p in paths:
         p = Path(p)
-        files = sorted(x for x in p.rglob("*") if x.is_file()) if p.is_dir() else [p]
+        if p.is_dir():
+            files = sorted(x for x in p.rglob("*") if x.is_file())
+        else:
+            files = [p]
         for f in files:
-            if f.suffix in (".jsonl", ".parquet"):
-                for k, rec in enumerate(iter_records(f)):
+            name = f.relative_to(p).as_posix() if p.is_dir() else f.name
+            if record_kind(f):
+                for k, rec in enumerate(iter_records(f, columns)):
                     if field_counts is not None:
                         field_counts[""] += 1
                         field_counts.update(x for x in text_fields if rec.get(x) is not None)
                     doc_id = rec.get(id_field)
                     yield (
-                        (str(doc_id) if doc_id is not None else f"{f.name}:{k}"),
+                        (str(doc_id) if doc_id is not None else f"{name}:{k}"),
                         _join(rec, text_fields),
                     )
-            elif f.suffix in TEXT_SUFFIXES or not p.is_dir():
-                yield f.name, f.read_text(encoding="utf-8", errors="replace")
+            elif f.suffix.lower() in TEXT_SUFFIXES or (text_files and not p.is_dir()):
+                yield name, f.read_text(encoding="utf-8", errors="replace")
+            elif p.is_dir():
+                if skipped is not None:
+                    skipped[f.suffix.lower() or f.name] += 1
+            else:
+                raise ValueError(
+                    f"{f}: unsupported corpus file type {f.suffix or '(no suffix)'!r}; "
+                    "use .jsonl, .jsonl.gz, .parquet or a text file "
+                    f"({', '.join(sorted(TEXT_SUFFIXES))}), or pass --text-files to read "
+                    "it whole as one document"
+                )
+
+
+def _score(v: Any, path: str | Path, record: int) -> float | None:
+    if v is None:
+        return None
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        x = math.nan
+    if isinstance(v, (list, dict)) or not math.isfinite(x):
+        raise ValueError(f"{path}:{record}: score {v!r} is not a finite number")
+    return x
 
 
 def load_eval(
@@ -120,8 +185,9 @@ def load_eval(
     """Load an evaluation set; the checked text is ``fields`` joined by newlines.
 
     Raises ``ValueError`` if one of ``fields`` is absent from every record, which is almost
-    always a misspelt field name. If ``missing`` is given, it receives, for each of
-    ``fields``, the number of records without it.
+    always a misspelt field name, or if a score is not a finite number (``NaN``, a list).
+    If ``missing`` is given, it receives, for each of ``fields``, the number of records
+    without it.
     """
     items = []
     seen: set[str] = set()
@@ -132,13 +198,9 @@ def load_eval(
         if item_id in seen:
             raise ValueError(f"duplicate item id {item_id!r} in {path}")
         seen.add(item_id)
-        score = rec.get(score_field) if score_field else None
-        if isinstance(score, bool):
-            score = float(score)
+        score = _score(rec.get(score_field), path, k + 1) if score_field else None
         text, spans = _join_with_spans(rec, fields)
-        items.append(
-            EvalItem(item_id, text, None if score is None else float(score), field_spans=spans)
-        )
+        items.append(EvalItem(item_id, text, score, field_spans=spans))
     gone = [f for f in fields if items and absent[f] == len(items)]
     if gone:
         keys = sorted({key for rec in iter_records(path) for key in rec})

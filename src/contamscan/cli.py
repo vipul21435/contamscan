@@ -13,7 +13,7 @@ from . import __version__
 from .io import iter_corpus, load_eval
 from .methods import METHODS, Params, gpt3_auto_n
 from .report import comparisons, summarise, to_json, to_markdown
-from .scan import scan
+from .scan import EvalItem, scan
 from .text import TOKENIZERS, tokenize
 
 
@@ -96,6 +96,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=_csv,
         default=["text"],
         help="comma-separated JSONL/Parquet text fields, joined by newlines (default: text)",
+    )
+    g.add_argument(
+        "--text-files",
+        action="store_true",
+        help="read corpus files named directly with any other suffix whole, as one text "
+        "document each (default: such files are an error)",
     )
     g.add_argument(
         "--corpus-id-field",
@@ -228,11 +234,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     for path in (args.eval, *args.corpus):
         if not path.exists():
             parser.error(f"no such file or directory: {path}")
+    if not args.eval.is_file():
+        parser.error(f"evaluation set is not a file: {args.eval}")
+    for out in (args.json, args.markdown):
+        if out is not None and not out.resolve().parent.is_dir():
+            parser.error(f"directory for the report does not exist: {out.parent}")
     missing: Counter[str] = Counter()
     try:
         items = load_eval(args.eval, args.fields, args.id_field, args.score_field, missing)
-    except ValueError as e:
+    except (ValueError, OSError) as e:
         parser.error(str(e))
+    if not items:
+        parser.error(f"evaluation set has no records: {args.eval}")
     for f in args.fields:
         if missing[f]:
             _warn(f"eval field {f!r} is missing from {missing[f]} of {len(items)} records")
@@ -258,9 +271,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         palm_per_field=args.palm_per_field,
         llama_skip_budget=args.llama_skip_budget,
     )
+    try:
+        return _run(args, items, params)
+    except (ValueError, OSError) as e:  # malformed corpus records, unreadable files
+        print(f"contamscan: error: {e}", file=sys.stderr)
+        return 2
+
+
+def _run(args: argparse.Namespace, items: list[EvalItem], params: Params) -> int:
     count: Counter[str] = Counter()
     fields_seen: Counter[str] = Counter()
-    corpus = iter_corpus(args.corpus, args.corpus_fields, args.corpus_id_field, fields_seen)
+    skipped: Counter[str] = Counter()
+    corpus = iter_corpus(
+        args.corpus,
+        args.corpus_fields,
+        args.corpus_id_field,
+        fields_seen,
+        text_files=args.text_files,
+        skipped=skipped,
+    )
     docs = _counting(corpus, count)
     t0 = time.perf_counter()
     results = scan(
@@ -272,6 +301,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         workers=args.workers,
     )
     seconds = time.perf_counter() - t0
+    if skipped:
+        kinds = ", ".join(f"{k} {v}" for k, v in sorted(skipped.items()))
+        _warn(
+            f"skipped {sum(skipped.values())} files of unsupported types in corpus "
+            f"directories ({kinds})"
+        )
     n_records = fields_seen[""]
     for f in args.corpus_fields:
         if n_records and not fields_seen[f]:
