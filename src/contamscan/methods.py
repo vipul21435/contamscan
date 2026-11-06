@@ -18,6 +18,11 @@ Defaults and their sources:
   matching n-grams), flagged at or above ``substring_min_tokens`` tokens (default 50, a
   choice of this tool, not from a paper); plus exact containment of the whole item text
   in a document, raw and normalised.
+
+``max_doc_freq`` (off by default): item n-grams found in more than this many corpus
+documents are ignored by ``gpt3``, ``palm`` and ``llama2``. GPT-3 (Appendix C) ignored
+13-grams that matched more than 10 training documents in its training-set filter, finding
+them to be mostly common phrases and boilerplate; for code this removes stock idioms.
 """
 
 from __future__ import annotations
@@ -46,6 +51,7 @@ class Params:
     llama_clean: float = 0.20
     llama_dirty: float = 0.80
     substring_min_tokens: int = 50
+    max_doc_freq: int | None = None
 
     def ns(self) -> tuple[int, ...]:
         return tuple(sorted({self.gpt3_n, self.palm_n, self.llama_n}))

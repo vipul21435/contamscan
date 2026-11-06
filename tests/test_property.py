@@ -73,3 +73,36 @@ def test_index_matches_brute_force(seed, workers):
         # chains of 3-grams find any shared run of 3 or more; a short item can also match whole
         expected = lcs if (lcs >= 3 or (len(t) < 5 and lcs == len(t))) else 0
         assert r.longest_match_tokens == expected
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_doc_frequency_filter_matches_brute_force(seed):
+    rng = random.Random(100 + seed)
+    vocab = [f"t{i}" for i in range(4)]
+    items = [
+        EvalItem(f"i{i}", " ".join(rng.choice(vocab) for _ in range(rng.randint(6, 30))))
+        for i in range(6)
+    ]
+    docs = [
+        (f"d{d}", " ".join(rng.choice(vocab) for _ in range(rng.randint(0, 40)))) for d in range(15)
+    ]
+    k_max = 3
+    params = Params(gpt3_n=4, palm_n=3, llama_n=5, max_doc_freq=k_max)
+    res = scan(items, docs, params)
+    dtoks = [d.split() for _, d in docs]
+    for it, r in zip(items, res, strict=True):
+        t = it.text.split()
+
+        def kept(n, t=t):
+            return {
+                p
+                for p in range(len(t) - n + 1)
+                if 0 < sum(occurs(t[p : p + n], h) for h in dtoks) <= k_max
+            }
+
+        assert r.gpt3_overlap == pytest.approx(len(kept(4)) / (len(t) - 3))
+        assert r.palm_overlap == pytest.approx(len(kept(3)) / (len(t) - 2))
+        cov = set()
+        for p in kept(5):
+            cov.update(range(p, p + 5))
+        assert r.llama2_coverage == pytest.approx(len(cov) / len(t))

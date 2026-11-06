@@ -60,6 +60,12 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--llama-clean", type=float, default=0.20)
     g.add_argument("--llama-dirty", type=float, default=0.80)
     g.add_argument("--substring-min-tokens", type=int, default=50)
+    g.add_argument(
+        "--max-doc-freq",
+        type=int,
+        default=None,
+        help="ignore item n-grams found in more than this many documents (off; GPT-3 used 10)",
+    )
     g = s.add_argument_group("output")
     g.add_argument("--max-matches", type=int, default=5, help="matches kept per item")
     g.add_argument("--workers", type=int, default=1, help="processes for the corpus scan")
@@ -98,6 +104,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         llama_clean=args.llama_clean,
         llama_dirty=args.llama_dirty,
         substring_min_tokens=args.substring_min_tokens,
+        max_doc_freq=args.max_doc_freq,
     )
     count = [0]
     docs = _counting(iter_corpus(args.corpus, args.corpus_fields, args.corpus_id_field), count)

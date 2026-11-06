@@ -97,3 +97,18 @@ def test_gpt3_auto_n_percentile_and_clamp():
     assert gpt3_auto_n(lengths) == 8
     assert gpt3_auto_n([10] * 5 + [50] * 95) == 10
     assert gpt3_auto_n([9, 11, 12] + [40] * 17) == 9
+
+
+def test_max_doc_freq_ignores_common_ngrams():
+    item = text(0, 40)
+    common = text(0, 13)  # in three documents
+    rare = text(20, 33)  # in one document
+    docs = [common, "x " + common, common + " y", rare]
+    r = run(item, docs)
+    assert r.gpt3_overlap == 2 / 28
+    r = run(item, docs, max_doc_freq=2)
+    assert r.gpt3_overlap == 1 / 28 and r.gpt3_label == "dirty"
+    r = run(item, docs[:3], max_doc_freq=2)
+    assert r.gpt3_overlap == 0.0 and r.gpt3_label == "clean"
+    # the longest-span report is not filtered
+    assert r.longest_match_tokens == 13

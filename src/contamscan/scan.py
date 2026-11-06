@@ -9,6 +9,7 @@ proportional to the evaluation set, not the corpus.
 from __future__ import annotations
 
 import multiprocessing as mp
+from collections import Counter
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 
@@ -76,12 +77,18 @@ class EvalIndex:
         self.tokens = [tokenize(it.text, tokenizer) for it in items]
         self.norm_texts = [normalise(it.text) for it in items]
         self.tables: dict[int, dict[int, list[tuple[int, int]]]] = {}
+        # n -> item -> hash of the n-gram starting at each position
+        self.item_hashes: dict[int, list[list[int]]] = {}
         for n in params.ns():
             table: dict[int, list[tuple[int, int]]] = {}
+            per_item = []
             for i, toks in enumerate(self.tokens):
-                for p, h in enumerate(ngram_hashes([t.text for t in toks], n)):
+                hs = ngram_hashes([t.text for t in toks], n)
+                per_item.append(hs)
+                for p, h in enumerate(hs):
                     table.setdefault(h, []).append((i, p))
             self.tables[n] = table
+            self.item_hashes[n] = per_item
         # GPT-3 rule: an item shorter than N is matched as a whole sequence.
         self.short: dict[int, dict[int, list[int]]] = {}
         for i, toks in enumerate(self.tokens):
@@ -174,6 +181,9 @@ def scan(
     short_hit = [False] * n_items
     doc_count = [0] * n_items
     best: list[list[Match]] = [[] for _ in range(n_items)]
+    # (n, hash) -> number of corpus documents containing that item n-gram
+    doc_freq: Counter[tuple[int, int]] = Counter()
+    count_freq = params.max_doc_freq is not None
 
     def results() -> Iterator[tuple[str, _DocHits, list[tuple[int, int]]]]:
         if workers <= 1:
@@ -185,6 +195,7 @@ def scan(
                 yield from pool.imap(_work, corpus, chunksize=64)
 
     for doc_id, hits, offsets in results():
+        seen: set[tuple[int, int]] = set()
         for i, by_n in hits.positions.items():
             doc_count[i] += 1
             for n, ps in by_n.items():
@@ -192,6 +203,9 @@ def scan(
                     short_hit[i] = True
                 else:
                     matched[n][i].update(ps)
+                    if count_freq:
+                        hs = index.item_hashes[n][i]
+                        seen.update((n, hs[p]) for p in ps)
             span = hits.spans.get(i)
             ex, exn = hits.exact.get(i, (False, False))
             if span is None or span[0] == 0:
@@ -213,6 +227,15 @@ def scan(
             lst.append(m)
             lst.sort(key=lambda x: (-x.exact, -x.tokens))
             del lst[max_matches:]
+        doc_freq.update(seen)
+
+    if count_freq:
+        k_max = params.max_doc_freq
+        for n, per_item in matched.items():
+            hs_n = index.item_hashes[n]
+            for i, ps in enumerate(per_item):
+                if ps:
+                    per_item[i] = {p for p in ps if doc_freq[(n, hs_n[i][p])] <= k_max}
 
     out: list[ItemResult] = []
     for i, it in enumerate(items):
