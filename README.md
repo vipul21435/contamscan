@@ -131,6 +131,12 @@ Flags and where their defaults come from:
   contaminated if it lies in a shared n-gram "longer than 10 tokens"; clean is below 20 %,
   dirty is at or above 80 %. The paper repeats the analysis with minimum match lengths
   10 to 50; pass a larger `--llama-n` to do the same.
+- `--llama-skip-budget 0`: the paper lets matched spans "differ in at most four positions"
+  (no mismatches in the first 10 tokens, none trailing). With a budget B > 0, exact runs on
+  the same alignment between item and document are joined while the tokens between them
+  total at most B; the first run must be at least n - 1 tokens long and the joined span at
+  least n tokens. The default is exact matching because this is an approximation (see
+  Limitations); pass 4 for the paper's budget.
 - `--max-doc-freq K` (off by default): ignore item n-grams found in more than K documents
   for `gpt3`, `palm` and `llama2`. GPT-3 "ignored 13-grams that matched more than 10
   training documents" in its training-set filter because they were mostly common phrases
@@ -167,43 +173,54 @@ HumanEval (164 items, `prompt` + `canonical_solution`) and the MBPP test split (
 `text` + `code`) scanned against two public code instruction sets: CodeAlpaca-20k
 (20,022 records, `instruction` + `input` + `output`) and
 bigcode/self-oss-instruct-sc2-exec-filter-50k (50,661 records, `instruction` +
-`response`, read directly from Parquet). Each pair is scanned with both tokenisers, once
-with default flags and once with the paper variants
-`--gpt3-n auto --palm-per-field --max-doc-freq 10`. Commands:
+`response`, read directly from Parquet). Each pair is scanned with both tokenisers in three
+settings: default flags (`default`), the GPT-3 and PaLM variants
+`--gpt3-n auto --palm-per-field --max-doc-freq 10` (`paper`), and the approximate Llama 2
+skipgram budget `--llama-skip-budget 4` (`skip4`). Commands:
 
 ```bash
 bash examples/fetch_code_data.sh data/raw                 # about 98 MB
 python examples/prepare_code_data.py data/raw data/jsonl  # Parquet/JSON -> JSONL
-bash examples/run_code_audit.sh data runs 4               # 16 scans, 4 worker processes
+bash examples/run_code_audit.sh data runs 4               # 24 scans, 4 worker processes
 python examples/summarise_runs.py runs
 ```
 
-The 16 scans took 56 s of wall time in total on an 8-core laptop. Items flagged (N is the
+The 24 scans took 2 min 43 s of wall time in total on an 8-core laptop that was running
+other jobs at the same time, so the times below are an upper bound rather than a benchmark. Items flagged (N is the
 GPT-3 n-gram size used; `auto` chose 13 everywhere because the 5th-percentile item is
 longer than 13 tokens; "any overlap" counts items sharing at least one n-gram of any
 size used):
 
 | eval | corpus | tokenizer | flags | N | gpt3 dirty | palm | llama2 dirty | llama2 not clean | substring | any overlap | scan s | wall s |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| humaneval | code_alpaca_20k | word | default | 13 | 7 (4.3 %) | 0 | 0 | 3 (1.8 %) | 0 | 55 | 0.8 | 0.9 |
+| humaneval | code_alpaca_20k | word | default | 13 | 7 (4.3 %) | 0 | 0 | 3 (1.8 %) | 0 | 55 | 0.9 | 1.0 |
 | humaneval | code_alpaca_20k | word | paper | 13 | 7 (4.3 %) | 1 (0.6 %) | 0 | 3 (1.8 %) | 0 | 55 | 0.8 | 0.9 |
-| humaneval | code_alpaca_20k | code | default | 13 | 53 (32.3 %) | 0 | 0 | 18 (11.0 %) | 0 | 139 | 1.2 | 1.3 |
-| humaneval | code_alpaca_20k | code | paper | 13 | 48 (29.3 %) | 1 (0.6 %) | 0 | 16 (9.8 %) | 0 | 139 | 1.1 | 1.3 |
-| humaneval | self_oss_instruct_50k | word | default | 13 | 15 (9.1 %) | 0 | 0 | 8 (4.9 %) | 0 | 94 | 4.8 | 4.9 |
-| humaneval | self_oss_instruct_50k | word | paper | 13 | 14 (8.5 %) | 2 (1.2 %) | 0 | 8 (4.9 %) | 0 | 94 | 4.3 | 4.4 |
-| humaneval | self_oss_instruct_50k | code | default | 13 | 80 (48.8 %) | 0 | 0 | 52 (31.7 %) | 4 (2.4 %) | 160 | 7.6 | 7.7 |
-| humaneval | self_oss_instruct_50k | code | paper | 13 | 76 (46.3 %) | 2 (1.2 %) | 0 | 39 (23.8 %) | 4 (2.4 %) | 160 | 6.9 | 7.0 |
-| mbpp_test | code_alpaca_20k | word | default | 13 | 19 (3.8 %) | 0 | 0 | 28 (5.6 %) | 1 (0.2 %) | 163 | 0.8 | 0.9 |
-| mbpp_test | code_alpaca_20k | word | paper | 13 | 19 (3.8 %) | 3 (0.6 %) | 0 | 28 (5.6 %) | 1 (0.2 %) | 163 | 0.8 | 0.9 |
-| mbpp_test | code_alpaca_20k | code | default | 13 | 88 (17.6 %) | 1 (0.2 %) | 1 (0.2 %) | 83 (16.6 %) | 1 (0.2 %) | 289 | 1.1 | 1.2 |
-| mbpp_test | code_alpaca_20k | code | paper | 13 | 85 (17.0 %) | 4 (0.8 %) | 1 (0.2 %) | 79 (15.8 %) | 1 (0.2 %) | 289 | 1.2 | 1.3 |
-| mbpp_test | self_oss_instruct_50k | word | default | 13 | 12 (2.4 %) | 0 | 0 | 25 (5.0 %) | 0 | 202 | 4.4 | 4.5 |
-| mbpp_test | self_oss_instruct_50k | word | paper | 13 | 12 (2.4 %) | 5 (1.0 %) | 0 | 25 (5.0 %) | 0 | 202 | 4.6 | 4.7 |
-| mbpp_test | self_oss_instruct_50k | code | default | 13 | 105 (21.0 %) | 0 | 0 | 108 (21.6 %) | 0 | 330 | 7.0 | 7.1 |
-| mbpp_test | self_oss_instruct_50k | code | paper | 13 | 100 (20.0 %) | 0 | 0 | 96 (19.2 %) | 0 | 330 | 6.6 | 6.8 |
+| humaneval | code_alpaca_20k | word | skip4 | 13 | 7 (4.3 %) | 0 | 0 | 3 (1.8 %) | 0 | 55 | 0.8 | 0.9 |
+| humaneval | code_alpaca_20k | code | default | 13 | 53 (32.3 %) | 0 | 0 | 18 (11.0 %) | 0 | 139 | 1.3 | 1.4 |
+| humaneval | code_alpaca_20k | code | paper | 13 | 48 (29.3 %) | 1 (0.6 %) | 0 | 16 (9.8 %) | 0 | 139 | 2.2 | 2.4 |
+| humaneval | code_alpaca_20k | code | skip4 | 13 | 53 (32.3 %) | 0 | 0 | 19 (11.6 %) | 0 | 139 | 1.7 | 1.8 |
+| humaneval | self_oss_instruct_50k | word | default | 13 | 15 (9.1 %) | 0 | 0 | 8 (4.9 %) | 0 | 94 | 6.8 | 7.0 |
+| humaneval | self_oss_instruct_50k | word | paper | 13 | 14 (8.5 %) | 2 (1.2 %) | 0 | 8 (4.9 %) | 0 | 94 | 7.1 | 7.2 |
+| humaneval | self_oss_instruct_50k | word | skip4 | 13 | 15 (9.1 %) | 0 | 0 | 8 (4.9 %) | 0 | 94 | 8.1 | 8.2 |
+| humaneval | self_oss_instruct_50k | code | default | 13 | 80 (48.8 %) | 0 | 0 | 52 (31.7 %) | 4 (2.4 %) | 160 | 12.0 | 12.2 |
+| humaneval | self_oss_instruct_50k | code | paper | 13 | 76 (46.3 %) | 2 (1.2 %) | 0 | 39 (23.8 %) | 4 (2.4 %) | 160 | 12.3 | 12.6 |
+| humaneval | self_oss_instruct_50k | code | skip4 | 13 | 80 (48.8 %) | 0 | 0 | 52 (31.7 %) | 4 (2.4 %) | 160 | 14.2 | 14.4 |
+| mbpp_test | code_alpaca_20k | word | default | 13 | 19 (3.8 %) | 0 | 0 | 28 (5.6 %) | 1 (0.2 %) | 163 | 1.4 | 1.5 |
+| mbpp_test | code_alpaca_20k | word | paper | 13 | 19 (3.8 %) | 3 (0.6 %) | 0 | 28 (5.6 %) | 1 (0.2 %) | 163 | 1.3 | 1.4 |
+| mbpp_test | code_alpaca_20k | word | skip4 | 13 | 19 (3.8 %) | 0 | 0 | 28 (5.6 %) | 1 (0.2 %) | 163 | 1.3 | 1.5 |
+| mbpp_test | code_alpaca_20k | code | default | 13 | 88 (17.6 %) | 1 (0.2 %) | 1 (0.2 %) | 83 (16.6 %) | 1 (0.2 %) | 289 | 2.0 | 2.2 |
+| mbpp_test | code_alpaca_20k | code | paper | 13 | 85 (17.0 %) | 4 (0.8 %) | 1 (0.2 %) | 79 (15.8 %) | 1 (0.2 %) | 289 | 1.6 | 1.8 |
+| mbpp_test | code_alpaca_20k | code | skip4 | 13 | 88 (17.6 %) | 1 (0.2 %) | 1 (0.2 %) | 83 (16.6 %) | 1 (0.2 %) | 289 | 1.6 | 1.8 |
+| mbpp_test | self_oss_instruct_50k | word | default | 13 | 12 (2.4 %) | 0 | 0 | 25 (5.0 %) | 0 | 202 | 9.1 | 9.3 |
+| mbpp_test | self_oss_instruct_50k | word | paper | 13 | 12 (2.4 %) | 5 (1.0 %) | 0 | 25 (5.0 %) | 0 | 202 | 8.8 | 9.0 |
+| mbpp_test | self_oss_instruct_50k | word | skip4 | 13 | 12 (2.4 %) | 0 | 0 | 26 (5.2 %) | 0 | 202 | 9.4 | 9.6 |
+| mbpp_test | self_oss_instruct_50k | code | default | 13 | 105 (21.0 %) | 0 | 0 | 108 (21.6 %) | 0 | 330 | 15.5 | 15.7 |
+| mbpp_test | self_oss_instruct_50k | code | paper | 13 | 100 (20.0 %) | 0 | 0 | 96 (19.2 %) | 0 | 330 | 14.6 | 14.9 |
+| mbpp_test | self_oss_instruct_50k | code | skip4 | 13 | 105 (21.0 %) | 0 | 0 | 110 (22.0 %) | 0 | 330 | 23.2 | 23.5 |
 
-`--workers` on the largest scan (HumanEval against self-oss-instruct, code tokenizer):
-19.8 s with 1 process, 6.7 s with 4, 6.2 s with 8 (scan time as printed by the tool).
+`--workers` on the HumanEval against self-oss-instruct scan with the code tokenizer, in a
+separate, quieter run: 19.8 s with 1 process, 6.7 s with 4, 6.2 s with 8 (scan time as
+printed by the tool).
 
 ![Share of items at or above each Llama 2 token-coverage level](docs/coverage-code.png)
 
@@ -245,7 +262,9 @@ statements whose wording is a template ("Write a python function to find the ...
 its flags need reading before they are believed. `--max-doc-freq 10` removes 0 to 5 GPT-3
 flags per run and lowers the not-clean count by up to 13 items (HumanEval, code tokenizer,
 self-oss-instruct), which is the expected effect of dropping n-grams that occur in many
-documents.
+documents. The approximate skipgram budget moves almost nothing here: it adds one or two
+items to the not-clean count in three runs and none to dirty, because the matches found
+are short shared idioms rather than long copies with a few edits.
 
 No per-item model results were used here, so these runs have no score comparison; it is
 shown only on the synthetic example above. EvalPlus publishes greedy model samples for
@@ -266,8 +285,10 @@ was considered and not used because its card states no licence.
 
 ## Limitations
 
-- The Llama 2 skipgram budget (matched spans may differ in up to four positions) is not
-  implemented; matches are exact after tokenisation. Llama 2 also counts model tokens,
+- The Llama 2 skipgram budget is approximated, not reproduced: `--llama-skip-budget`
+  (default 0, exact matching) joins exact runs of at least the smallest n (8 by default)
+  on the same alignment and counts every token between them as a mismatch, so two edits
+  closer together than that are charged the whole gap. Llama 2 also counts model tokens,
   while this tool counts word or code tokens.
 - `--max-doc-freq` does not apply to the longest-span (`substring`) method or to the
   whole-item match of items shorter than N.

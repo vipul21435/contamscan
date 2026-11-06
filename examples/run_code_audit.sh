@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Scan HumanEval and the MBPP test split against two public code SFT sets, with both
-# tokenisers, once with the default flags and once with the paper variants
-# (--gpt3-n auto --palm-per-field --max-doc-freq 10).
+# tokenisers, in three settings: the default flags ("default"), the GPT-3 and PaLM
+# variants --gpt3-n auto --palm-per-field --max-doc-freq 10 ("paper"), and the
+# approximate Llama 2 skipgram budget --llama-skip-budget 4 ("skip4").
 #
 # Usage: examples/run_code_audit.sh DATA_DIR OUT_DIR [WORKERS]
 # DATA_DIR holds raw/ (from fetch_code_data.sh) and jsonl/ (from prepare_code_data.py).
@@ -21,10 +22,12 @@ for ev in humaneval mbpp_test; do
       cfields=instruction,response
     fi
     for tok in word code; do
-      for variant in default paper; do
+      for variant in default paper skip4; do
         extra=()
         if [ "$variant" = paper ]; then
           extra=(--gpt3-n auto --palm-per-field --max-doc-freq 10)
+        elif [ "$variant" = skip4 ]; then
+          extra=(--llama-skip-budget 4)
         fi
         name=$ev-$corpus-$tok-$variant
         start=$(python3 -c 'import time; print(time.time())')
