@@ -168,7 +168,8 @@ Flags and where their defaults come from:
   least n tokens. The default is exact matching because this is an approximation (see
   Limitations); pass 4 for the paper's budget.
 - `--max-doc-freq K` (off by default): ignore item n-grams found in more than K documents
-  for `gpt3`, `palm` and `llama2`. GPT-3 "ignored 13-grams that matched more than 10
+  for `gpt3`, `palm` and `llama2` (a `--llama-skip-budget` span is dropped when one of the
+  n-grams it is built from is that common). GPT-3 "ignored 13-grams that matched more than 10
   training documents" in its training-set filter because they were mostly common phrases
   and boilerplate; for code, `K = 10` drops stock idioms.
 - `--substring-min-tokens 50`: not from a paper; a run of 50 tokens is long enough that

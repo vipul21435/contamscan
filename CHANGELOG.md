@@ -53,3 +53,5 @@
 - Document ids of records without an id and of text files are relative to the corpus
   argument (`train/part-0.jsonl:17`, `repo_a/README.md`); Parquet corpora read only the
   text and id columns.
+- Fix: `--max-doc-freq` now also applies to `--llama-skip-budget` spans; before, a span
+  removed by the frequency filter came back through the skip budget.

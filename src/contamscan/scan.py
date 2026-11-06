@@ -73,6 +73,9 @@ class _DocHits:
     contained: dict[int, tuple[bool, bool, int, int]]
     # character offsets of the document's tokens (filled only when ``spans`` is not empty)
     offsets: list[tuple[int, int]]
+    # item -> skipgram spans (start, end, chaining n-gram starts; the last only with
+    # --max-doc-freq)
+    skip: dict[int, list[tuple[int, int, tuple[int, ...]]]] = field(default_factory=dict)
 
 
 # Containment prefilter: the item's normalised words, minus the first and last (which may
@@ -188,14 +191,22 @@ class EvalIndex:
                     positions.setdefault(i, {}).setdefault(-1, set()).add(0)
                     offer(i, (len(self.tokens[i]), -j, 0))  # the whole short item
         spans = {i: (b[0], -b[2], -b[1]) for i, b in best.items()}
-        if budget > 0:
-            for i, rs in runs.items():
-                covered = skipgram_cover(rs, budget, self.params.llama_n)
-                if covered:
-                    positions.setdefault(i, {})[SKIP_KEY] = covered
+        skip: dict[int, list[tuple[int, int, tuple[int, ...]]]] = {}
+        keep_starts = self.params.max_doc_freq is not None
+        for i, rs in runs.items():
+            found = []
+            for a, b, members in skipgram_spans(rs, budget, self.params.llama_n):
+                starts = (
+                    tuple(p for s0, e0 in members for p in range(s0, e0 - span_n + 1))
+                    if keep_starts
+                    else ()
+                )
+                found.append((a, b, starts))
+            if found:
+                skip[i] = found
         contained = self._containment(text)
         offsets = [(t.start, t.end) for t in toks] if spans else []
-        return _DocHits(positions, spans, contained, offsets)
+        return _DocHits(positions, spans, contained, offsets, skip)
 
     def _containment(self, text: str) -> dict[int, tuple[bool, bool, int, int]]:
         """Items whose whole text occurs in ``text``, raw or after ``normalise``.
@@ -230,9 +241,6 @@ class EvalIndex:
         return out
 
 
-SKIP_KEY = -2  # positions entry holding token positions covered by skipgram spans
-
-
 def skipgram_cover(runs: list[tuple[int, int, int]], budget: int, n: int) -> set[int]:
     """Item token positions covered by Llama 2-style skipgram spans.
 
@@ -245,13 +253,26 @@ def skipgram_cover(runs: list[tuple[int, int, int]], budget: int, n: int) -> set
     so this is an approximation of the paper's skipgrams: two mismatches separated by fewer
     matching tokens than that size use up the whole gap between them.
     """
+    covered: set[int] = set()
+    for a, b, _ in skipgram_spans(runs, budget, n):
+        covered.update(range(a, b))
+    return covered
+
+
+def skipgram_spans(
+    runs: list[tuple[int, int, int]], budget: int, n: int
+) -> list[tuple[int, int, tuple[tuple[int, int], ...]]]:
+    """The spans behind ``skipgram_cover``: ``(start, end, member runs)``, where each
+    member run is an item token range ``(start, end)``. Only spans with at least one
+    mismatch are returned (exact runs are counted through the n-gram index)."""
     by_diag: dict[int, list[tuple[int, int]]] = {}
     for length, p, j in runs:
         by_diag.setdefault(j - p, []).append((p, p + length))
     head = n - 1
-    covered: set[int] = set()
+    out = []
     for segs in by_diag.values():
         segs.sort()
+        members = [segs[0]]
         start, end = segs[0]
         first, used = end - start, 0
         spans = []
@@ -259,14 +280,13 @@ def skipgram_cover(runs: list[tuple[int, int, int]], budget: int, n: int) -> set
             gap = a - end
             if first >= head and used + gap <= budget:
                 end, used = b, used + gap
+                members.append((a, b))
             else:
-                spans.append((start, end, used))
-                start, end, first, used = a, b, b - a, 0
-        spans.append((start, end, used))
-        for a, b, used in spans:
-            if used and b - a >= n:
-                covered.update(range(a, b))
-    return covered
+                spans.append((start, end, used, tuple(members)))
+                start, end, first, used, members = a, b, b - a, 0, [(a, b)]
+        spans.append((start, end, used, tuple(members)))
+        out.extend((a, b, m) for a, b, used, m in spans if used and b - a >= n)
+    return out
 
 
 _WORKER_INDEX: EvalIndex | None = None
@@ -300,6 +320,8 @@ def scan(
     matched: dict[int, list[set[int]]] = {n: [set() for _ in range(n_items)] for n in params.ns()}
     short_hit = [False] * n_items
     skip_cov: list[set[int]] = [set() for _ in range(n_items)]
+    # with --max-doc-freq, skipgram spans are kept until document frequencies are known
+    skip_spans: list[set[tuple[int, int, tuple[int, ...]]]] = [set() for _ in range(n_items)]
     doc_count = [0] * n_items
     best: list[list[Match]] = [[] for _ in range(n_items)]
     # (n, hash) -> number of corpus documents containing that item n-gram
@@ -322,8 +344,6 @@ def scan(
             for n, ps in hits.positions.get(i, {}).items():
                 if n == -1:
                     short_hit[i] = True
-                elif n == SKIP_KEY:
-                    skip_cov[i].update(ps)
                 else:
                     matched[n][i].update(ps)
                     if count_freq:
@@ -353,6 +373,12 @@ def scan(
             lst.append(m)
             lst.sort(key=lambda x: (-(x.exact or x.exact_normalised), -x.tokens))
             del lst[max_matches:]
+        for i, found in hits.skip.items():
+            if count_freq:
+                skip_spans[i].update(found)
+            else:
+                for a, b, _ in found:
+                    skip_cov[i].update(range(a, b))
         doc_freq.update(seen)
 
     if count_freq:
@@ -362,6 +388,13 @@ def scan(
             for i, ps in enumerate(per_item):
                 if ps:
                     per_item[i] = {p for p in ps if doc_freq[(n, hs_n[i][p])] <= k_max}
+        # a skipgram span counts only if none of its chaining n-grams is too common
+        span_n = params.span_n()
+        hs_span = index.item_hashes[span_n]
+        for i, found in enumerate(skip_spans):
+            for a, b, starts in found:
+                if all(doc_freq[(span_n, hs_span[i][p])] <= k_max for p in starts):
+                    skip_cov[i].update(range(a, b))
 
     out: list[ItemResult] = []
     for i, it in enumerate(items):

@@ -205,3 +205,15 @@ def test_normalised_offsets_fall_back_to_whole_document(monkeypatch):
     doc = "x ALPHA BETA GAMMA"
     m = run("alpha beta gamma", [doc]).matches[0]
     assert m.exact_normalised and (m.doc_start, m.doc_end) == (0, len(doc))
+
+
+def test_max_doc_freq_also_filters_skipgram_spans():
+    """A span whose n-grams are too common is not brought back by the skip budget."""
+    words = [f"t{k}" for k in range(21)]
+    item = " ".join(words)
+    edited = " ".join("zz" if k == 10 else w for k, w in enumerate(words))
+    docs = [edited] * 3
+    assert run(item, docs, max_doc_freq=1, llama_skip_budget=0).llama2_coverage == 0.0
+    assert run(item, docs, max_doc_freq=1, llama_skip_budget=4).llama2_coverage == 0.0
+    assert run(item, docs, max_doc_freq=3, llama_skip_budget=4).llama2_coverage == 1.0
+    assert run(item, docs, llama_skip_budget=4).llama2_coverage == 1.0
