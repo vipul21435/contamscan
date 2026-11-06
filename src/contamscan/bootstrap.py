@@ -42,19 +42,20 @@ def compare(
     n_boot: int = 10_000,
     confidence: float = 0.95,
     seed: int = 0,
+    chunk: int = 2**20,
 ) -> Comparison | None:
     """Return the difference ``mean(contaminated) - mean(clean)`` with a bootstrap interval.
 
-    Returns ``None`` when either group is empty.
+    Resample indices are drawn about ``chunk`` at a time, so memory stays bounded for large
+    groups. Returns ``None`` when either group is empty.
     """
     a = np.asarray(clean, dtype=float)
     b = np.asarray(contaminated, dtype=float)
     if a.size == 0 or b.size == 0:
         return None
     rng = np.random.default_rng(seed)
-    ma = a[rng.integers(0, a.size, size=(n_boot, a.size))].mean(axis=1)
-    mb = b[rng.integers(0, b.size, size=(n_boot, b.size))].mean(axis=1)
-    diffs = mb - ma
+    ma = _resampled_means(a, n_boot, rng, chunk)  # clean first: keeps the stream order
+    diffs = _resampled_means(b, n_boot, rng, chunk) - ma
     alpha = (1 - confidence) / 2
     low, high = np.quantile(diffs, [alpha, 1 - alpha])
     return Comparison(
@@ -68,6 +69,22 @@ def compare(
         confidence=confidence,
         n_boot=n_boot,
     )
+
+
+def _resampled_means(
+    x: np.ndarray, n_boot: int, rng: np.random.Generator, chunk: int
+) -> np.ndarray:
+    """Means of ``n_boot`` resamples of ``x``, drawn in row blocks of about ``chunk`` values.
+
+    Blocks are drawn one after another from ``rng``, which gives the same numbers as one
+    ``(n_boot, x.size)`` draw.
+    """
+    rows = max(1, chunk // x.size)
+    out = np.empty(n_boot)
+    for r0 in range(0, n_boot, rows):
+        r1 = min(n_boot, r0 + rows)
+        out[r0:r1] = x[rng.integers(0, x.size, size=(r1 - r0, x.size))].mean(axis=1)
+    return out
 
 
 @dataclass(frozen=True)

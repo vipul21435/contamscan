@@ -55,3 +55,6 @@
   text and id columns.
 - Fix: `--max-doc-freq` now also applies to `--llama-skip-budget` spans; before, a span
   removed by the frequency filter came back through the skip budget.
+- Fix: bootstrap resamples are drawn in blocks of about a million values, so memory no
+  longer grows with `--n-boot` times the group size; results for a given seed are
+  unchanged.

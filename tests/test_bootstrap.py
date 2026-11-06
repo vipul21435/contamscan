@@ -108,3 +108,24 @@ def test_subset_z_edge_cases_and_relative_change():
     assert relative_change([0.5], [0.5, 0.7]) == (0.5 - 0.6) / 0.6
     assert relative_change([], [1.0]) is None
     assert relative_change([1.0], [0.0]) is None
+
+
+def test_compare_draws_resamples_in_bounded_memory():
+    """Resamples are drawn in chunks: memory does not grow with n_boot x n, and the result
+    equals drawing every resample at once from the same generator."""
+    import tracemalloc
+
+    from contamscan.bootstrap import compare
+
+    rng = np.random.default_rng(3)
+    clean, dirty = rng.random(14_000), rng.random(300)
+    tracemalloc.start()
+    c = compare(clean, dirty, n_boot=2_000, seed=4)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert peak < 40 * 2**20, peak
+    g = np.random.default_rng(4)
+    ma = clean[g.integers(0, clean.size, size=(2_000, clean.size))].mean(axis=1)
+    mb = dirty[g.integers(0, dirty.size, size=(2_000, dirty.size))].mean(axis=1)
+    low, high = np.quantile(mb - ma, [0.025, 0.975])
+    assert (c.low, c.high) == (float(low), float(high))
