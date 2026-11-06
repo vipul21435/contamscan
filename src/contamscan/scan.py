@@ -124,8 +124,10 @@ class EvalIndex:
                     positions.setdefault(i, {}).setdefault(-1, set()).add(0)
                     pairs.setdefault(i, set()).add((-1 - j, j))  # marker for whole-item hit
         spans: dict[int, tuple[int, int, int]] = {}
+        budget = self.params.llama_skip_budget
         for i, ps in pairs.items():
             best = (0, 0, 0)
+            runs: list[tuple[int, int, int]] = []  # (tokens, item start, doc start)
             for p, j in ps:
                 if p < 0:  # whole short item matched at doc position j
                     cand = (len(self.tokens[i]), 0, j)
@@ -136,9 +138,14 @@ class EvalIndex:
                     while (p + r, j + r) in ps:
                         r += 1
                     cand = (r + span_n - 1, p, j)
+                    runs.append(cand)
                 if cand[0] > best[0]:
                     best = cand
             spans[i] = best
+            if budget > 0 and runs:
+                covered = skipgram_cover(runs, budget, self.params.llama_n)
+                if covered:
+                    positions.setdefault(i, {})[SKIP_KEY] = covered
         exact: dict[int, tuple[bool, bool]] = {}
         if positions:
             norm_doc = normalise(text)
@@ -148,6 +155,45 @@ class EvalIndex:
                 exact[i] = (bool(raw) and raw in text, bool(nt) and nt in norm_doc)
         self._last_doc_tokens = toks
         return _DocHits(positions, spans, exact)
+
+
+SKIP_KEY = -2  # positions entry holding token positions covered by skipgram spans
+
+
+def skipgram_cover(runs: list[tuple[int, int, int]], budget: int, n: int) -> set[int]:
+    """Item token positions covered by Llama 2-style skipgram spans.
+
+    ``runs`` are maximal exact runs ``(tokens, item start, doc start)`` between one item and
+    one document. Runs on the same diagonal (same ``doc start - item start``) are joined
+    while the tokens between them, counted as mismatches, total at most ``budget``. A span
+    may not start with mismatches in its first ``n - 1`` tokens (its first run must be at
+    least that long), ends on a run (no trailing mismatches) and counts when it has at
+    least ``n`` tokens. Mismatches are only seen between runs of the chaining n-gram size,
+    so this is an approximation of the paper's skipgrams: two mismatches separated by fewer
+    matching tokens than that size use up the whole gap between them.
+    """
+    by_diag: dict[int, list[tuple[int, int]]] = {}
+    for length, p, j in runs:
+        by_diag.setdefault(j - p, []).append((p, p + length))
+    head = n - 1
+    covered: set[int] = set()
+    for segs in by_diag.values():
+        segs.sort()
+        start, end = segs[0]
+        first, used = end - start, 0
+        spans = []
+        for a, b in segs[1:]:
+            gap = a - end
+            if first >= head and used + gap <= budget:
+                end, used = b, used + gap
+            else:
+                spans.append((start, end, used))
+                start, end, first, used = a, b, b - a, 0
+        spans.append((start, end, used))
+        for a, b, used in spans:
+            if used and b - a >= n:
+                covered.update(range(a, b))
+    return covered
 
 
 _WORKER_INDEX: EvalIndex | None = None
@@ -182,6 +228,7 @@ def scan(
     n_items = len(items)
     matched: dict[int, list[set[int]]] = {n: [set() for _ in range(n_items)] for n in params.ns()}
     short_hit = [False] * n_items
+    skip_cov: list[set[int]] = [set() for _ in range(n_items)]
     doc_count = [0] * n_items
     best: list[list[Match]] = [[] for _ in range(n_items)]
     # (n, hash) -> number of corpus documents containing that item n-gram
@@ -204,6 +251,8 @@ def scan(
             for n, ps in by_n.items():
                 if n == -1:
                     short_hit[i] = True
+                elif n == SKIP_KEY:
+                    skip_cov[i].update(ps)
                 else:
                     matched[n][i].update(ps)
                     if count_freq:
@@ -262,6 +311,7 @@ def scan(
         covered: set[int] = set()
         for p in matched[params.llama_n][i]:
             covered.update(range(p, p + params.llama_n))
+        covered |= skip_cov[i]
         cov = len(covered) / k if k else 0.0
         longest = max((m.tokens for m in best[i]), default=0)
         exact = any(m.exact or m.exact_normalised for m in best[i])

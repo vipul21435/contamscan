@@ -12,8 +12,9 @@ Defaults and their sources:
 * ``llama2``: Touvron et al. 2023 (arXiv 2307.09288, Appendix A.6). A token is contaminated
   if it lies in a matching n-gram longer than 10 tokens (default n = 11). Samples are
   *clean* below 20 % token contamination and *dirty* at or above 80 %; *not clean* and
-  *not dirty* are the complements. The paper's skipgram budget of four mismatched
-  positions is not implemented: matches here are exact.
+  *not dirty* are the complements. The paper allows a "skipgram budget" of four
+  mismatched positions; ``llama_skip_budget`` (default 0, exact matching) turns on an
+  approximation of it, see ``scan.skipgram_cover``.
 * ``substring``: the longest span shared with one corpus document (a run of consecutive
   matching n-grams), flagged at or above ``substring_min_tokens`` tokens (default 50, a
   choice of this tool, not from a paper); plus exact containment of the whole item text
@@ -57,6 +58,7 @@ class Params:
     substring_min_tokens: int = 50
     max_doc_freq: int | None = None
     palm_per_field: bool = False
+    llama_skip_budget: int = 0
 
     def ns(self) -> tuple[int, ...]:
         return tuple(sorted({self.gpt3_n, self.palm_n, self.llama_n}))

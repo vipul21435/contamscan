@@ -134,3 +134,30 @@ def test_palm_per_field():
     short = EvalItem("s", "a b", field_spans=(("q", 0, 3),))
     r = scan([short], corpus, Params(palm_per_field=True))[0]
     assert r.palm_fields == {"q": None} and r.palm_label == "too-short"
+
+
+def test_llama2_skip_budget_joins_runs_across_substitutions():
+    item = text(0, 30)
+    words = item.split()
+    words[12] = "X"  # runs 0-11 (12 tokens), 13-21 (9), 23-29 (7, below the 8-gram size)
+    words[22] = "Y"
+    doc = " ".join(words)
+    exact = run(item, [doc])
+    assert exact.llama2_coverage == 12 / 30
+    skip = run(item, [doc], llama_skip_budget=4)
+    assert skip.llama2_coverage == 22 / 30
+    # budget too small for a gap of one: same as exact
+    assert run(item, [doc], llama_skip_budget=0).llama2_coverage == 12 / 30
+
+
+def test_skipgram_cover_rules():
+    from contamscan.scan import skipgram_cover
+
+    # first run shorter than 10 tokens may not be followed by mismatches
+    assert skipgram_cover([(9, 0, 0), (12, 10, 10)], 4, 11) == set()
+    # gaps add up against the budget
+    runs = [(10, 0, 5), (8, 12, 17), (8, 23, 28)]  # gaps 2 and 3 on one diagonal
+    assert skipgram_cover(runs, 5, 11) == set(range(0, 31))
+    assert skipgram_cover(runs, 4, 11) == set(range(0, 20))
+    # runs on different diagonals are never joined
+    assert skipgram_cover([(10, 0, 0), (10, 11, 30)], 4, 11) == set()

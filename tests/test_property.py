@@ -106,3 +106,48 @@ def test_doc_frequency_filter_matches_brute_force(seed):
         for p in kept(5):
             cov.update(range(p, p + 5))
         assert r.llama2_coverage == pytest.approx(len(cov) / len(t))
+
+
+def diagonal_runs(t: list[str], h: list[str], min_len: int) -> list[tuple[int, int, int]]:
+    """Maximal runs of equal tokens along every diagonal, by direct comparison."""
+    runs = []
+    for d in range(-len(t), len(h) + 1):
+        p = max(0, -d)
+        while p < len(t) and p + d < len(h):
+            if t[p] != h[p + d]:
+                p += 1
+                continue
+            q = p
+            while q < len(t) and q + d < len(h) and t[q] == h[q + d]:
+                q += 1
+            if q - p >= min_len:
+                runs.append((q - p, p, p + d))
+            p = q
+    return runs
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_skip_budget_coverage_matches_direct_runs(seed):
+    from contamscan.scan import skipgram_cover
+
+    rng = random.Random(200 + seed)
+    vocab = [f"t{i}" for i in range(30)]
+    items, docs = [], []
+    for i in range(5):
+        words = [rng.choice(vocab) for _ in range(rng.randint(15, 50))]
+        items.append(EvalItem(f"i{i}", " ".join(words)))
+        noisy = [w if rng.random() > 0.08 else "zz" for w in words]
+        docs.append((f"d{i}", " ".join([rng.choice(vocab) for _ in range(5)] + noisy)))
+    params = Params(gpt3_n=13, palm_n=6, llama_n=9, llama_skip_budget=3)
+    res = scan(items, docs, params)
+    dtoks = [d.split() for _, d in docs]
+    for it, r in zip(items, res, strict=True):
+        t = it.text.split()
+        cov = set()
+        for h in dtoks:
+            runs = diagonal_runs(t, h, 6)
+            for length, p, _ in runs:
+                if length >= 9:
+                    cov.update(range(p, p + length))
+            cov |= skipgram_cover(runs, 3, 9)
+        assert r.llama2_coverage == pytest.approx(len(cov) / len(t))
