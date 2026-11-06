@@ -187,6 +187,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     g.add_argument("--seed", type=int, default=0, help="bootstrap random seed (0)")
     g.add_argument(
+        "--llama-z-fpc",
+        action="store_true",
+        help="apply the finite-population correction (N-n)/(N-1) to the Llama 2 sigma_n "
+        "(off: sigma_n = s/sqrt(n), the form the paper's Table 51 is consistent with)",
+    )
+    g.add_argument(
         "--fail-above",
         type=_fraction,
         default=None,
@@ -279,8 +285,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     if count["empty"]:
         _warn(f"{count['empty']} of {count['docs']} corpus documents have no text")
-    meta = {"documents": count["docs"], "tokenizer": args.tokenizer, "seconds": round(seconds, 3)}
-    comp = comparisons(results, n_boot=args.n_boot, seed=args.seed)
+    meta = {
+        "documents": count["docs"],
+        "tokenizer": args.tokenizer,
+        "seconds": round(seconds, 3),
+        "llama_z_fpc": args.llama_z_fpc,
+    }
+    comp = comparisons(results, n_boot=args.n_boot, seed=args.seed, z_fpc=args.llama_z_fpc)
     if args.json:
         args.json.write_text(to_json(results, params, meta, comp))
     md = to_markdown(results, params, meta, comp, examples=args.examples)

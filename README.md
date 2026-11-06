@@ -95,10 +95,10 @@ From `runs/synthetic/report.md` (the `llama2` row is dirty versus not dirty):
 
 | Llama 2 subset | n | mean | mu_n | sigma_n | Z |
 |---|---:|---:|---:|---:|---:|
-| clean | 141 | 0.461 | 0.555 | 0.023 | -4.13 |
-| not clean | 59 | 0.780 | 0.555 | 0.054 | +4.13 |
-| not dirty | 160 | 0.475 | 0.555 | 0.018 | -4.54 |
-| dirty | 40 | 0.875 | 0.555 | 0.070 | +4.54 |
+| clean | 141 | 0.461 | 0.555 | 0.042 | -2.25 |
+| not clean | 59 | 0.780 | 0.555 | 0.065 | +3.47 |
+| not dirty | 160 | 0.475 | 0.555 | 0.039 | -2.04 |
+| dirty | 40 | 0.875 | 0.555 | 0.079 | +4.07 |
 
 GPT-3 clean-only score 0.469 on 145 items against 0.555 on all 200: relative change
 -15.5 %.
@@ -191,12 +191,15 @@ the last whitespace-delimited chunk holding the matched words.
    versus clean. A test checks the interval's coverage by simulation.
 2. The Llama 2 statistic for each of the four subsets (clean, not clean, not dirty,
    dirty): `Z_n = (mean(subset) - mu_n) / sigma_n`, where `mu_n` is the mean over all N items
-   and `sigma_n^2 = s^2 / n * (N - n) / (N - 1)` is the variance of the mean of n items
-   drawn without replacement from the set (`s^2` the population variance). The paper calls
-   a dataset affected when all four subsets have |Z_n| > 2. It does not say whether its
-   sampling is with or without replacement; this tool draws without replacement, which
-   makes the Z of a subset and of its complement equal in size and opposite in sign. A
-   test checks `sigma_n` against the spread of means of random subsets.
+   and `sigma_n^2 = s^2 / n` is the variance of the mean of n items drawn independently
+   from the set (`s^2` the population variance). The paper calls a dataset affected when
+   all four subsets have |Z_n| > 2. Its prose does not say how the sampling distribution
+   is formed, but its Table 51 fixes it: for a subset and its complement the ratio of
+   their |Z| equals `sqrt(n_large / n_small)` (HellaSwag, 70B: 9.56 / 5.73 = 1.668 against
+   `sqrt(7391 / 2651)` = 1.670), which holds for `s / sqrt(n)` and not for a
+   finite-population form, under which the two Z would be equal and opposite.
+   `--llama-z-fpc` applies the correction `(N - n) / (N - 1)` instead. Tests check both
+   forms against simulated sampling and the ratio identity.
 3. GPT-3's comparison: the score on the clean-only items against the score on all items,
    as a relative change `(clean - full) / full`. GPT-3 reads a clean score "more than 1% or
    2% worse than the overall score" as a sign of overfitting to seen examples.
@@ -378,9 +381,9 @@ was considered and not used because its card states no licence.
   while this tool counts word or code tokens.
 - `--max-doc-freq` does not apply to the longest-span (`substring`) method or to the
   whole-item match of items shorter than N.
-- The Llama 2 sampling distribution is computed analytically for sampling without
-  replacement; the paper does not state its choice, so Z values may differ from a
-  with-replacement calculation by the factor `sqrt((N - n) / (N - 1))`.
+- The Llama 2 sampling distribution is computed analytically (`sigma_n = s / sqrt(n)`),
+  not by drawing subsets as the paper may have done; the two agree up to Monte Carlo
+  noise.
 - A JSON array corpus file is not supported; convert it to JSONL (see
   `examples/prepare_code_data.py`). With joined fields an n-gram may span two fields;
   `--palm-per-field` changes only the PaLM fraction.

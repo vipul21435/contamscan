@@ -8,8 +8,8 @@ each group independently (the groups are disjoint sets of items).
 
 It also gives the Llama 2 subset statistic ``Z_n = (mean(subset) - mu_n) / sigma_n``, where
 ``mu_n`` and ``sigma_n**2`` are the mean and variance of the mean of ``n`` items drawn from
-the whole evaluation set, and the GPT-3 relative change of the clean-only score against the
-score on the whole set.
+the whole evaluation set (``sigma_n = s / sqrt(n)``), and the GPT-3 relative change of the
+clean-only score against the score on the whole set.
 """
 
 from __future__ import annotations
@@ -80,16 +80,18 @@ class SubsetZ:
     z: float | None
 
 
-def subset_z(scores: Sequence[float], mask: Sequence[bool], subset: str = "") -> SubsetZ | None:
+def subset_z(
+    scores: Sequence[float], mask: Sequence[bool], subset: str = "", *, fpc: bool = False
+) -> SubsetZ | None:
     """Llama 2 statistic for one subset of the evaluation set.
 
-    ``mu_n`` is the mean over all ``N`` items and ``sigma_n**2`` the variance of the mean of
-    ``n`` items drawn without replacement from them:
-    ``sigma_n**2 = s**2 / n * (N - n) / (N - 1)`` with ``s**2`` the population variance.
-    The paper does not say whether its sampling is with or without replacement; drawing
-    without replacement matches choosing a subset of a fixed set. ``z`` is ``None`` when
-    ``sigma_n`` is zero (the subset is the whole set, or every score is equal). Returns
-    ``None`` for an empty subset.
+    ``mu_n`` is the mean over all ``N`` items and ``sigma_n**2 = s**2 / n`` the variance of
+    the mean of ``n`` items drawn independently from them, with ``s**2`` the population
+    variance. This is the form Table 51 of the paper is consistent with: for a subset and
+    its complement, ``|Z_small| / |Z_large| = sqrt(n_large / n_small)`` in its rows. With
+    ``fpc=True`` the finite-population correction ``(N - n) / (N - 1)`` (drawing without
+    replacement) is applied, which makes a subset and its complement equal and opposite.
+    ``z`` is ``None`` when ``sigma_n`` is zero. Returns ``None`` for an empty subset.
     """
     x = np.asarray(scores, dtype=float)
     m = np.asarray(mask, dtype=bool)
@@ -97,7 +99,9 @@ def subset_z(scores: Sequence[float], mask: Sequence[bool], subset: str = "") ->
     if n == 0:
         return None
     mu = float(x.mean())
-    var = float(x.var()) / n * (big_n - n) / (big_n - 1) if big_n > 1 else 0.0
+    var = float(x.var()) / n
+    if fpc:
+        var = var * (big_n - n) / (big_n - 1) if big_n > 1 else 0.0
     sigma = float(np.sqrt(var))
     mean = float(x[m].mean())
     z = (mean - mu) / sigma if sigma > 0 else None

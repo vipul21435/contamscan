@@ -31,3 +31,6 @@
   `--llama-dirty`, `--workers 0`, negative `--max-matches`) and missing input paths are
   usage errors (exit status 2) instead of tracebacks or silent acceptance; a partial
   `--score-field` prints how many items lack a score.
+- Fix: the Llama 2 `sigma_n` is now `s / sqrt(n)`, the form the paper's Table 51 is
+  consistent with; the finite-population correction used before inflated |Z| of the large
+  subsets (clean, not dirty) and is kept behind `--llama-z-fpc`.

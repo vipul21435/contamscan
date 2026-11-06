@@ -68,7 +68,7 @@ def summarise(results: list[ItemResult]) -> dict[str, Any]:
 
 
 def comparisons(
-    results: list[ItemResult], *, n_boot: int = 10_000, seed: int = 0
+    results: list[ItemResult], *, n_boot: int = 10_000, seed: int = 0, z_fpc: bool = False
 ) -> dict[str, Any]:
     """Score comparisons, when every item has a score; ``{}`` otherwise.
 
@@ -76,7 +76,8 @@ def comparisons(
       interval. For ``llama2`` this is dirty versus not dirty; ``llama2_not_clean_vs_clean``
       adds the other Llama 2 split.
     * ``llama2_subsets``: mean score and ``Z_n`` of the four Llama 2 subsets against the
-      whole set (the paper calls a set affected when all four have ``|Z_n| > 2``).
+      whole set (the paper calls a set affected when all four have ``|Z_n| > 2``);
+      ``z_fpc`` applies the finite-population correction to ``sigma_n``.
     * ``gpt3_clean_vs_full``: the GPT-3 relative change of the clean-only score against the
       score on all items.
     """
@@ -95,7 +96,7 @@ def comparisons(
     diffs["llama2_not_clean_vs_clean"] = asdict(c) if c else None
     subsets = []
     for name, labels in LLAMA2_SUBSETS.items():
-        z = subset_z(scores, [r.llama2_label in labels for r in results], name)
+        z = subset_z(scores, [r.llama2_label in labels for r in results], name, fpc=z_fpc)
         subsets.append(asdict(z) if z else {"subset": name, "n": 0})
     gpt3_clean = [r.score for r in results if not is_contaminated(r, "gpt3")]
     full_mean = sum(scores) / len(scores)
