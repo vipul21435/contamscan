@@ -266,10 +266,52 @@ documents. The approximate skipgram budget moves almost nothing here: it adds on
 items to the not-clean count in three runs and none to dirty, because the matches found
 are short shared idioms rather than long copies with a few edits.
 
+### Planted contamination
+
+The runs above cannot say what the methods miss, because the true contamination of the
+corpora is unknown. `examples/planted_recall.py` plants 100 of the 164 HumanEval items into
+CodeAlpaca-20k, 20 in each of five forms, each appended to the output of a different
+random record (seed 0), and leaves 64 unplanted:
+
+```bash
+python examples/planted_recall.py data runs/planted   # 4.6 s wall time, 4 scans
+```
+
+Items flagged, out of the number in the "items" column (word and code tokenizer, each
+with and without `--llama-skip-budget 4`; the `skip4` rows differ only where shown):
+
+| tokenizer | planted as | items | gpt3 dirty | palm | llama2 dirty | llama2 not clean | substring |
+|---|---|---:|---:|---:|---:|---:|---:|
+| word | full (prompt + solution, verbatim) | 20 | 20 | 20 | 20 | 20 | 20 |
+| word | prompt only | 20 | 20 | 6 | 3 | 20 | 11 |
+| word | solution only | 20 | 14 | 0 | 0 | 13 | 2 |
+| word | recased (upper case, tabs) | 20 | 20 | 20 | 20 | 20 | 20 |
+| word | edited (every 10th code token replaced) | 20 | 2 | 0 | 0 | 1 (skip4: 2) | 0 |
+| word | not planted | 64 | 5 | 0 | 0 | 4 | 0 |
+| code | full | 20 | 20 | 20 | 20 | 20 | 20 |
+| code | prompt only | 20 | 20 | 10 | 4 | 20 | 18 |
+| code | solution only | 20 | 17 | 0 | 0 | 17 | 6 |
+| code | recased | 20 | 13 | 0 | 0 | 8 | 12 |
+| code | edited | 20 | 8 | 0 | 0 | 5 (skip4: 7) | 0 |
+| code | not planted | 64 | 27 | 0 | 0 | 12 | 1 |
+
+Reading: every method finds a verbatim copy of the whole item. When only half of the item
+leaks (prompt or solution), PaLM and Llama 2 dirty, which ask for most of the item, miss
+half or more of them, while the any-13-gram rule and the Llama 2 not-clean subset still catch
+them; the price is the false flags on unplanted items (5 of 64 with words, 27 of 64 with
+code tokens). The word tokenizer is blind to case and layout, the code tokenizer is not,
+and there the normalised containment check (`substring`) recovers 12 of the 20 recased
+items. Dense edits defeat every exact n-gram method; the approximate skipgram budget
+recovers one or two more items only in the not-clean count.
+
+### Scores and data sources
+
 No per-item model results were used here, so these runs have no score comparison; it is
 shown only on the synthetic example above. EvalPlus publishes greedy model samples for
 HumanEval on its GitHub releases page, but not per-problem pass/fail verdicts, and
-producing verdicts would mean executing model-generated code, which was not done.
+producing verdicts would mean executing model-generated code, which was not done. The
+nuprl/MultiPL-E-completions dataset on Hugging Face holds completions with execution
+results, but its dataset card states no licence, so it was not used.
 
 Data sources and licences, each checked on its dataset card:
 
