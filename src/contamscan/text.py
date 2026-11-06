@@ -82,18 +82,20 @@ def normalise(
     return out
 
 
+def _nfkc(s: str) -> str:
+    return s if s.isascii() else unicodedata.normalize("NFKC", s)
+
+
 def tokenize(text: str, mode: str = "word") -> list[Token]:
     """Split ``text`` into tokens with character offsets into ``text``.
 
     Token texts are NFKC-normalised; ``word`` tokens are also case-folded, ``code`` tokens
     keep case. Offsets are those of the raw match.
     """
-    nfkc = unicodedata.normalize
     if mode == "word":
         return [
-            Token(nfkc("NFKC", m.group()).casefold(), m.start(), m.end())
-            for m in _WORD_RE.finditer(text)
+            Token(_nfkc(m.group()).casefold(), m.start(), m.end()) for m in _WORD_RE.finditer(text)
         ]
     if mode == "code":
-        return [Token(nfkc("NFKC", m.group()), m.start(), m.end()) for m in _CODE_RE.finditer(text)]
+        return [Token(_nfkc(m.group()), m.start(), m.end()) for m in _CODE_RE.finditer(text)]
     raise ValueError(f"unknown tokenizer {mode!r}; choose one of {TOKENIZERS}")
