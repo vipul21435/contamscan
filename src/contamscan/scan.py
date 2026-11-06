@@ -138,46 +138,59 @@ class EvalIndex:
         return max(0, len(self.tokens[i]) - n + 1)
 
     def scan_doc(self, text: str) -> _DocHits:
+        """Match one corpus document against the index."""
         toks = tokenize(text, self.tokenizer)
         words = [t.text for t in toks]
         positions: dict[int, dict[int, set[int]]] = {}
         span_n = self.params.span_n()
-        pairs: dict[int, set[tuple[int, int]]] = {}
+        budget = self.params.llama_skip_budget
+        # item -> best span as (tokens, -doc start, -item start); ties go to the earliest
+        best: dict[int, tuple[int, int, int]] = {}
+        runs: dict[int, list[tuple[int, int, int]]] = {}  # (tokens, item start, doc start)
+
+        def offer(i: int, cand: tuple[int, int, int]) -> None:
+            if cand > best.get(i, (0, 0, 0)):
+                best[i] = cand
+
         for n, table in self.tables.items():
-            for j, h in enumerate(ngram_hashes(words, n)):
-                hits = table.get(h)
-                if not hits:
-                    continue
-                for i, p in hits:
-                    positions.setdefault(i, {}).setdefault(n, set()).add(p)
-                    if n == span_n:
-                        pairs.setdefault(i, set()).add((p, j))
+            hashes = ngram_hashes(words, n)
+            if n != span_n:  # only which item n-grams occur matters
+                for h in set(hashes):
+                    for i, p in table.get(h, ()):
+                        positions.setdefault(i, {}).setdefault(n, set()).add(p)
+                continue
+            # Walk the document in order, keeping for each item the length of the diagonal
+            # run ending at every item position matched at the previous document position.
+            # Memory is bounded by the item length, not by the number of hits.
+            prev: dict[int, dict[int, int]] = {}
+            for j in range(len(hashes) + 1):
+                cur: dict[int, dict[int, int]] = {}
+                hits = table.get(hashes[j]) if j < len(hashes) else None
+                if hits:
+                    for i, p in hits:
+                        positions.setdefault(i, {}).setdefault(n, set()).add(p)
+                        before = prev.get(i)
+                        r = before.get(p - 1, 0) + 1 if before else 1
+                        cur.setdefault(i, {})[p] = r
+                for i, ended in prev.items():
+                    nxt = cur.get(i)
+                    for p, r in ended.items():
+                        if nxt is not None and p + 1 in nxt:
+                            continue  # the run goes on
+                        p0, j0 = p - r + 1, j - r
+                        offer(i, (r + span_n - 1, -j0, -p0))
+                        if budget > 0:
+                            runs.setdefault(i, []).append((r + span_n - 1, p0, j0))
+                prev = cur
         for k, table in self.short.items():
             for j, h in enumerate(ngram_hashes(words, k)):
                 for i in table.get(h, ()):
                     positions.setdefault(i, {}).setdefault(-1, set()).add(0)
-                    pairs.setdefault(i, set()).add((-1 - j, j))  # marker for whole-item hit
-        spans: dict[int, tuple[int, int, int]] = {}
-        budget = self.params.llama_skip_budget
-        for i, ps in pairs.items():
-            best = (0, 0, 0)
-            runs: list[tuple[int, int, int]] = []  # (tokens, item start, doc start)
-            for p, j in ps:
-                if p < 0:  # whole short item matched at doc position j
-                    cand = (len(self.tokens[i]), 0, j)
-                elif (p - 1, j - 1) in ps:
-                    continue  # not the start of a run
-                else:
-                    r = 1
-                    while (p + r, j + r) in ps:
-                        r += 1
-                    cand = (r + span_n - 1, p, j)
-                    runs.append(cand)
-                if cand[0] > best[0]:
-                    best = cand
-            spans[i] = best
-            if budget > 0 and runs:
-                covered = skipgram_cover(runs, budget, self.params.llama_n)
+                    offer(i, (len(self.tokens[i]), -j, 0))  # the whole short item
+        spans = {i: (b[0], -b[2], -b[1]) for i, b in best.items()}
+        if budget > 0:
+            for i, rs in runs.items():
+                covered = skipgram_cover(rs, budget, self.params.llama_n)
                 if covered:
                     positions.setdefault(i, {})[SKIP_KEY] = covered
         contained = self._containment(text)

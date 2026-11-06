@@ -34,3 +34,6 @@
 - Fix: the Llama 2 `sigma_n` is now `s / sqrt(n)`, the form the paper's Table 51 is
   consistent with; the finite-population correction used before inflated |Z| of the large
   subsets (clean, not dirty) and is kept behind `--llama-z-fpc`.
+- Fix: the longest-run search no longer stores every (item position, document position)
+  pair of the chaining n-gram, which took quadratic memory on documents with repeated
+  separator lines; runs are now extended while walking the document.

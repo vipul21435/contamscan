@@ -123,7 +123,13 @@ normalised form (NFKC, case-folded, punctuation removed, whitespace collapsed).
 the evaluation set's n-gram hashes go into a dict `hash -> [(item, position)]`. The corpus
 is streamed once (`--workers K` spreads documents over K processes); each document's
 n-gram hashes are looked up and the hit positions are accumulated per item. Memory grows
-with the evaluation set, not the corpus. With 64-bit hashes the chance of a false match
+with the evaluation set, not the corpus: the longest run is tracked while walking the
+document in order, keeping per item only the run length at each item position matched at
+the previous document position. Time per document is proportional to the number of
+(item position, document position) hits of the chaining n-gram, so a document made of one
+repeated n-gram that also repeats in an item is slow (about 2 s for a 20,000-character
+separator block against a 60-character separator in one item, from the test in
+`tests/test_scan_memory.py`) but does not grow memory. With 64-bit hashes the chance of a false match
 between two given n-grams is about 2^-64. Property tests check the index, the
 document-frequency filter and the skipgram budget against direct scans of random text
 drawn from small vocabularies, and whole-item containment against a direct substring
