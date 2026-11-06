@@ -143,3 +143,34 @@ def test_parquet_reads_only_the_needed_columns(tmp_path, monkeypatch):
     monkeypatch.setattr(pq.ParquetFile, "iter_batches", spy)
     assert list(iter_corpus([f], ["text", "missing"])) == [("a", "t")]
     assert sorted(seen[0]) == ["id", "text"]
+
+
+def test_chat_messages_corpus_finds_a_verbatim_copy_under_every_method(tmp_path, capsys):
+    prompt = 'def add(a, b):\n    """Return the sum of a and b, as in "à la carte" lists."""\n'
+    solution = "    total = a + b\n    if total < 0:\n        return -total\n    return total\n"
+    ev = _write(tmp_path / "e.jsonl", [{"id": "q", "prompt": prompt, "solution": solution}])
+    messages = [
+        {"role": "user", "content": "Complete this function."},
+        {"role": "assistant", "content": prompt + solution},
+    ]
+    corpus = _write(tmp_path / "chat.jsonl", [{"id": "c0", "messages": messages}])
+    out = tmp_path / "r.json"
+    args = ["scan", str(ev), str(corpus), "--fields", "prompt,solution"]
+    args += ["--corpus-fields", "messages", "--json", str(out), "--palm-n", "4"]
+    args += ["--gpt3-n", "4", "--llama-n", "4", "--substring-min-tokens", "8"]
+    for tok in ("word", "code"):
+        assert main([*args, "--tokenizer", tok]) == 0
+        rep = json.loads(out.read_text())
+        counts = {m: v["contaminated"] for m, v in rep["summary"]["methods"].items()}
+        assert set(counts.values()) == {1}, (tok, counts)
+        assert rep["items"][0]["matches"][0]["exact_normalised"]
+
+
+def test_nested_eval_fields_are_flattened_to_their_string_leaves(tmp_path):
+    ev = _write(
+        tmp_path / "e.jsonl",
+        [{"id": "q", "question": "Où coule le Rhône ?", "choices": ["Lyon", {"x": "Genève"}, 3]}],
+    )
+    (item,) = load_eval(ev, ["question", "choices"])
+    assert item.text == "Où coule le Rhône ?\nLyon\nGenève\n3"
+    assert item.field_spans[1] == ("choices", 20, len(item.text))

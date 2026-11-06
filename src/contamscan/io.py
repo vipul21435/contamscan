@@ -80,13 +80,36 @@ def iter_records(
             yield rec
 
 
+def _leaves(v: Any) -> Iterator[str]:
+    if isinstance(v, str):
+        yield v
+    elif isinstance(v, dict):
+        for x in v.values():
+            yield from _leaves(x)
+    elif isinstance(v, (list, tuple)):
+        for x in v:
+            yield from _leaves(x)
+    elif v is not None:
+        yield json.dumps(v, ensure_ascii=False, default=str)
+
+
+def _flatten(v: Any) -> str:
+    """A field value as text: a string as is, a list or dict as its leaves, one per line.
+
+    A chat ``messages`` list thus becomes its roles and turns, and a list of answer choices
+    its choices, rather than JSON text with escapes and quotes that would hide a verbatim
+    copy from every method. Numbers and booleans are written as JSON (``3``, ``true``).
+    """
+    return v if isinstance(v, str) else "\n".join(_leaves(v))
+
+
 def _join(rec: dict[str, Any], fields: Sequence[str]) -> str:
     parts = []
     for f in fields:
         v = rec.get(f)
         if v is None:
             continue
-        parts.append(v if isinstance(v, str) else json.dumps(v))
+        parts.append(_flatten(v))
     return "\n".join(parts)
 
 
@@ -101,7 +124,7 @@ def _join_with_spans(
         v = rec.get(f)
         if v is None:
             continue
-        s = v if isinstance(v, str) else json.dumps(v)
+        s = _flatten(v)
         if parts:
             pos += 1  # the joining newline
         spans.append((f, pos, pos + len(s)))

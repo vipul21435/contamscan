@@ -60,3 +60,6 @@
   unchanged.
 - Package exports (`EvalItem`, `Params`, `load_eval`, `iter_corpus`, `summarise`, ...),
   docstrings on the public objects, and a mypy check in CI.
+- Fix: a field holding a list or an object (a chat `messages` list, answer choices) is
+  read as its string values, one per line; before, it was matched as JSON text with
+  escapes and quotes, so a verbatim copy in a chat corpus was missed by every method.

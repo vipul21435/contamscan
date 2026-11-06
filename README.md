@@ -68,7 +68,10 @@ NFKC-normalised (an NFD or fullwidth copy gives the same tokens as the original)
 Han, hiragana and katakana character is a token of its own, since Chinese and Japanese put
 no spaces between words; character n-grams are the usual unit for such text. Every token
 keeps its character span in the raw text. The text of an item is its
-`--fields` joined by newlines. Exact containment is checked on the raw text and on a
+`--fields` joined by newlines, and a corpus document's text is its `--corpus-fields` joined
+the same way. A field that holds a list or an object (a chat `messages` list, answer
+choices) is replaced by its string values, one per line, so a turn copied verbatim is
+matched as text rather than as JSON with escapes and quotes. Exact containment is checked on the raw text and on a
 normalised form (NFKC, case-folded, punctuation removed, whitespace collapsed).
 
 **Index.** Each token is hashed with BLAKE2b to 64 bits; an n-gram hash is the polynomial
