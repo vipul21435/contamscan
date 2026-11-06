@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from collections.abc import Sequence
+from collections import Counter
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 
 from . import __version__
@@ -95,15 +96,30 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _counting(docs, counter):
+def _counting(docs: Iterable[tuple[str, str]], counter: Counter[str]) -> Iterator[tuple[str, str]]:
+    """Pass documents through, counting them (``docs``) and those with no text (``empty``)."""
     for d in docs:
-        counter[0] += 1
+        counter["docs"] += 1
+        if not d[1].strip():
+            counter["empty"] += 1
         yield d
 
 
+def _warn(msg: str) -> None:
+    print(f"contamscan: warning: {msg}", file=sys.stderr)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    items = load_eval(args.eval, args.fields, args.id_field, args.score_field)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    missing: Counter[str] = Counter()
+    try:
+        items = load_eval(args.eval, args.fields, args.id_field, args.score_field, missing)
+    except ValueError as e:
+        parser.error(str(e))
+    for f in args.fields:
+        if missing[f]:
+            _warn(f"eval field {f!r} is missing from {missing[f]} of {len(items)} records")
     gpt3_n = args.gpt3_n
     if gpt3_n == "auto":
         gpt3_n = gpt3_auto_n([len(tokenize(it.text, args.tokenizer)) for it in items])
@@ -119,8 +135,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         palm_per_field=args.palm_per_field,
         llama_skip_budget=args.llama_skip_budget,
     )
-    count = [0]
-    docs = _counting(iter_corpus(args.corpus, args.corpus_fields, args.corpus_id_field), count)
+    count: Counter[str] = Counter()
+    fields_seen: Counter[str] = Counter()
+    corpus = iter_corpus(args.corpus, args.corpus_fields, args.corpus_id_field, fields_seen)
+    docs = _counting(corpus, count)
     t0 = time.perf_counter()
     results = scan(
         items,
@@ -131,7 +149,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         workers=args.workers,
     )
     seconds = time.perf_counter() - t0
-    meta = {"documents": count[0], "tokenizer": args.tokenizer, "seconds": round(seconds, 3)}
+    n_records = fields_seen[""]
+    for f in args.corpus_fields:
+        if n_records and not fields_seen[f]:
+            _warn(f"corpus field {f!r} is missing from all {n_records} records")
+    if count["docs"] == count["empty"]:
+        print(
+            f"contamscan: error: none of the {count['docs']} corpus documents has any text; "
+            "check --corpus-fields and the corpus paths",
+            file=sys.stderr,
+        )
+        return 2
+    if count["empty"]:
+        _warn(f"{count['empty']} of {count['docs']} corpus documents have no text")
+    meta = {"documents": count["docs"], "tokenizer": args.tokenizer, "seconds": round(seconds, 3)}
     comp = comparisons(results, n_boot=args.n_boot, seed=args.seed)
     if args.json:
         args.json.write_text(to_json(results, params, meta, comp))
@@ -139,7 +170,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.markdown:
         args.markdown.write_text(md)
     summary = summarise(results)
-    print(f"{summary['items']} items, {count[0]} documents, {seconds:.1f} s")
+    print(f"{summary['items']} items, {count['docs']} documents, {seconds:.1f} s")
     for m, v in summary["methods"].items():
         print(f"  {m:<10} {v['contaminated']:>6} contaminated ({100 * v['fraction']:.1f}%)")
     if args.fail_above is not None:

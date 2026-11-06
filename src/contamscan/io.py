@@ -8,6 +8,7 @@ document. Nothing is loaded whole.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
@@ -82,11 +83,14 @@ def iter_corpus(
     paths: Sequence[str | Path],
     text_fields: Sequence[str] = ("text",),
     id_field: str = "id",
+    field_counts: Counter[str] | None = None,
 ) -> Iterator[tuple[str, str]]:
     """Yield ``(doc_id, text)`` for every document in ``paths``.
 
     Directories are walked for ``.jsonl``, ``.parquet`` and plain-text files. A record
-    without ``id_field`` gets the id ``<file name>:<record number>``.
+    without ``id_field`` gets the id ``<file name>:<record number>``. If ``field_counts``
+    is given, it counts the JSONL and Parquet records (key ``""``) and, for each of
+    ``text_fields``, the records that have it.
     """
     for p in paths:
         p = Path(p)
@@ -94,6 +98,9 @@ def iter_corpus(
         for f in files:
             if f.suffix in (".jsonl", ".parquet"):
                 for k, rec in enumerate(iter_records(f)):
+                    if field_counts is not None:
+                        field_counts[""] += 1
+                        field_counts.update(x for x in text_fields if rec.get(x) is not None)
                     doc_id = rec.get(id_field)
                     yield (
                         (str(doc_id) if doc_id is not None else f"{f.name}:{k}"),
@@ -108,11 +115,19 @@ def load_eval(
     fields: Sequence[str],
     id_field: str = "id",
     score_field: str | None = None,
+    missing: Counter[str] | None = None,
 ) -> list[EvalItem]:
-    """Load an evaluation set; the checked text is ``fields`` joined by newlines."""
+    """Load an evaluation set; the checked text is ``fields`` joined by newlines.
+
+    Raises ``ValueError`` if one of ``fields`` is absent from every record, which is almost
+    always a misspelt field name. If ``missing`` is given, it receives, for each of
+    ``fields``, the number of records without it.
+    """
     items = []
     seen: set[str] = set()
+    absent: Counter[str] = Counter()
     for k, rec in enumerate(iter_records(path)):
+        absent.update(f for f in fields if rec.get(f) is None)
         item_id = str(rec.get(id_field, k))
         if item_id in seen:
             raise ValueError(f"duplicate item id {item_id!r} in {path}")
@@ -124,4 +139,13 @@ def load_eval(
         items.append(
             EvalItem(item_id, text, None if score is None else float(score), field_spans=spans)
         )
+    gone = [f for f in fields if items and absent[f] == len(items)]
+    if gone:
+        keys = sorted({key for rec in iter_records(path) for key in rec})
+        raise ValueError(
+            f"field(s) {', '.join(map(repr, gone))} missing from all {len(items)} records of "
+            f"{path}; fields found: {', '.join(keys[:20])}"
+        )
+    if missing is not None:
+        missing.update({f: absent[f] for f in fields})
     return items

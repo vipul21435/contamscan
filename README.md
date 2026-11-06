@@ -49,7 +49,12 @@ $ contamscan scan data/jsonl/humaneval.jsonl data/raw/self_oss_instruct_50k.parq
 ```
 
 With `--fail-above F` the command exits with status 1 when the contaminated fraction under
-`--fail-method` (default `palm`) is above `F`, so it can gate a CI job.
+`--fail-method` (default `palm`) is above `F`, so it can gate a CI job. It exits with
+status 2, before any report is written, when the input cannot give a meaningful answer: a
+`--fields` name absent from every evaluation record (a misspelt field would otherwise give
+every item empty text and a 0 % rate), or a corpus in which no document has any text. A
+field missing from only some records, a `--corpus-fields` name found in no record, and
+documents with empty text are reported as warnings on stderr.
 
 The score comparison needs per-item scores. A seeded synthetic run shows it
 (`python examples/synthetic_comparison.py runs/synthetic`, 0.7 s wall time): 200 items of

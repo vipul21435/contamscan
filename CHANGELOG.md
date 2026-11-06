@@ -24,3 +24,6 @@
   that already shared an n-gram with the document, and a contained item whose shared span
   was empty was dropped, so re-cased copies were missed with the code tokenizer.
   Containment matches are kept first under `--max-matches`.
+- Fix: a `--fields` name missing from every evaluation record, or a corpus with no text in
+  any document, now stops with exit status 2 instead of reporting 0 % and passing
+  `--fail-above`; partly missing fields and empty documents give warnings.

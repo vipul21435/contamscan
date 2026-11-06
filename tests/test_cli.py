@@ -128,3 +128,40 @@ def test_paper_flags_and_empty_groups(tmp_path):
     assert dirty["n"] == 0
     md = out_md.read_text()
     assert "one group empty" in md and "| dirty | 0 |" in md
+
+
+def test_misspelt_eval_field_is_an_error(tmp_path, capsys):
+    import pytest
+
+    ev, corpus = make(tmp_path, scores=False)
+    base = ["scan", str(ev), str(corpus), "--fail-above", "0.0", "--fail-method", "gpt3"]
+    with pytest.raises(SystemExit) as e:
+        main(base + ["--fields", "promt,soluton"])
+    assert e.value.code == 2
+    err = capsys.readouterr().err
+    assert "'promt', 'soluton'" in err and "fields found: id, prompt" in err
+
+
+def test_eval_field_missing_from_some_records_warns(tmp_path, capsys):
+    ev, corpus = make(tmp_path, scores=False)
+    rows = [json.loads(x) for x in ev.read_text().splitlines()]
+    rows[0]["extra"] = "w0 w1"
+    ev.write_text("\n".join(json.dumps(r) for r in rows))
+    assert main(["scan", str(ev), str(corpus), "--fields", "prompt,extra"]) == 0
+    assert "'extra' is missing from 5 of 6 records" in capsys.readouterr().err
+
+
+def test_misspelt_corpus_field_fails_the_gate(tmp_path, capsys):
+    ev, corpus = make(tmp_path, scores=False)
+    args = ["scan", str(ev), str(corpus), "--fields", "prompt", "--corpus-fields", "txt"]
+    assert main(args + ["--fail-above", "0.0", "--fail-method", "gpt3"]) == 2
+    err = capsys.readouterr().err
+    assert "corpus field 'txt' is missing from all 2 records" in err
+    assert "none of the 2 corpus documents has any text" in err
+
+
+def test_some_empty_corpus_documents_warn(tmp_path, capsys):
+    ev, corpus = make(tmp_path, scores=False)
+    corpus.write_text(corpus.read_text() + "\n" + json.dumps({"id": "d2", "text": "  "}))
+    assert main(["scan", str(ev), str(corpus), "--fields", "prompt"]) == 0
+    assert "1 of 3 corpus documents have no text" in capsys.readouterr().err

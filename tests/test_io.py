@@ -57,3 +57,18 @@ def test_load_eval_field_spans(tmp_path):
     for name, start, end in a.field_spans:
         assert a.text[start:end] == {"q": "hello", "s": "world", "n": "3"}[name]
     assert b.field_spans == (("s", 0, 1),)
+
+
+def test_field_presence_counts(tmp_path):
+    from collections import Counter
+
+    p = tmp_path / "e.jsonl"
+    write_jsonl(p, [{"id": "a", "q": "x"}, {"id": "b", "q": "y", "s": "z"}])
+    missing: Counter = Counter()
+    load_eval(p, ["q", "s"], missing=missing)
+    assert missing == Counter({"q": 0, "s": 1})
+    with pytest.raises(ValueError, match="'t' missing from all 2 records"):
+        load_eval(p, ["q", "t"])
+    seen: Counter = Counter()
+    assert len(list(iter_corpus([p], ["s", "t"], field_counts=seen))) == 2
+    assert seen == Counter({"": 2, "s": 1})
