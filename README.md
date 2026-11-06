@@ -95,7 +95,7 @@ match between two given n-grams is about 2^-64. Property tests check the index, 
 document-frequency filter and the skipgram budget against direct scans of random text
 drawn from small vocabularies, whole-item containment against a direct substring check,
 and the tokenizers on text in NFC, NFD, NFKC and NFKD form. Test coverage is 99 % of
-statements (`uv run pytest --cov=contamscan`, 106 tests).
+statements (`uv run pytest --cov=contamscan`, 119 tests).
 
 **Methods.** For an item with k tokens and g_n = k - n + 1 n-grams:
 
