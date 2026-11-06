@@ -66,3 +66,5 @@
 - Fix: a truncated or corrupt `.jsonl.gz` file (corpus or evaluation set) is an input
   error with exit status 2; before, the gzip error escaped as a traceback with status 1,
   the status of `--fail-above`.
+- Fix: a Parquet corpus or evaluation set without pyarrow installed exits with status 2
+  and a `contamscan: error:` line; before, it exited with status 1.

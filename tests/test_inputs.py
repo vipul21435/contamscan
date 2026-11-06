@@ -209,3 +209,19 @@ def test_corrupt_gzip_eval_set_is_a_usage_error(tmp_path, capsys):
         main(["scan", str(f), str(corpus)])
     assert e.value.code == 2
     assert "corrupt gzip" in capsys.readouterr().err
+
+
+def test_parquet_without_pyarrow_is_status_2(tmp_path, ev, capsys, monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "pyarrow", None)
+    monkeypatch.setitem(sys.modules, "pyarrow.parquet", None)
+    f = tmp_path / "c.parquet"
+    f.write_bytes(b"PAR1")
+    assert main(["scan", str(ev), str(f), "--fail-above", "0"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("contamscan: error:") and "needs pyarrow" in err
+    with pytest.raises(SystemExit) as e:
+        main(["scan", str(f), str(f)])
+    assert e.value.code == 2
+    assert "needs pyarrow" in capsys.readouterr().err

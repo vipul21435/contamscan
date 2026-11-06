@@ -36,8 +36,10 @@ def _iter_parquet(
 ) -> Iterator[dict[str, Any]]:
     try:
         import pyarrow.parquet as pq
-    except ImportError as e:  # pragma: no cover - depends on the environment
-        raise SystemExit("reading Parquet needs pyarrow: pip install 'contamscan[parquet]'") from e
+    except ImportError as e:
+        raise ValueError(
+            f"{path}: reading Parquet needs pyarrow: pip install 'contamscan[parquet]'"
+        ) from e
     pf = pq.ParquetFile(path)
     cols = None
     if columns is not None:
